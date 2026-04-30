@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+.Spotlight-V100
+.Trashes
+._*
+.fseventsd
+
+# Windows
+Thumbs.db
+System Volume Information/
+
+# OpenCore build artifacts
+*.dSYM/
+
+# Don't commit actual kext/driver/SSDT binaries — download from official sources
+# EFI/OC/Kexts/
+# EFI/OC/ACPI/
+# EFI/OC/Drivers/
+# EFI/OC/Tools/
+# EFI/OC/Resources/
+
+# Boot logs
+*.log

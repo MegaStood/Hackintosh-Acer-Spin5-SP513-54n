@@ -27,6 +27,7 @@ This guide documents a complete installation including **every problem encounter
   - [Problem 5: npci=0x2000 Regression](#problem-5-npci0x2000-makes-things-worse)
   - [Problem 6: Insyde Won't Show Boot Entry Name](#problem-6-insyde-firmware-wont-show-opencore-boot-entry-name)
   - [Problem 7: Bluetooth Firmware Not Loading](#problem-7-bluetooth-firmware-not-loading--v0-c0)
+- [USB Port Map](#usb-port-map-verified-2026-05-01)
 - [Credits](#credits)
 
 ## Hardware
@@ -42,7 +43,7 @@ This guide documents a complete installation including **every problem encounter
 | **Trackpad** | I2C HID (Precision Touchpad) |
 | **Touchscreen** | I2C HID |
 | **Audio** | Realtek (layout-id 13) |
-| **Ports** | 2× Thunderbolt 3 (USB-C) |
+| **Ports** | 2× USB-A (left + right), 2× Thunderbolt 3 USB-C (both left side) — see [USB Port Map](#usb-port-map-verified-2026-05-01) |
 | **BIOS** | InsydeH20 |
 
 ## What Works
@@ -718,6 +719,52 @@ BlueToolFixup.kext             → loads THIRD (Sonoma compatibility shim)
 If `BlueToolFixup` loads before `IntelBluetoothFirmware`, it patches Apple's Bluetooth framework before the controller has received its firmware — this also causes `v0 c0`.
 
 ---
+
+## USB Port Map (verified 2026-05-01)
+
+Derived from Windows USBTreeView with USB 2 + USB 3 thumb drives in every external port. Use this table when adding new internal devices to `USBMap.kext` or debugging "device not enumerating" issues.
+
+**Physical layout:**
+- Left side (front → rear): USB-A, USB-C, USB-C
+- Right side: USB-A
+
+**Key wiring quirk:** The two left-side USB-C ports each split into two lanes routed through different controllers — USB 2 lanes go to XHC, USB 3 SuperSpeed lanes go to TXHC (Thunderbolt). This is normal Thunderbolt 3 USB-C wiring; TXHC has no USB 2 root-hub ports at the hardware level.
+
+### XHC controller — pcidebug `0:20:0` (PCI `0:14:0` hex), 18-port root hub
+
+| Phys port | macOS label | `port` byte | UsbConnector | Device / role |
+|---|---|---|---|---|
+| 1 | HS01 | `0x01` | 9 (Type-C) | Left **front** USB-C, USB 2 lane (companion: TXHC port 3) |
+| 2 | HS02 | `0x02` | 9 | Left **rear** USB-C, USB 2 lane (companion: TXHC port 2) |
+| 3 | HS03 | `0x03` | 3 (USB 3 Type-A) | **Left** USB-A, USB 2 lane (companion: XHC port 13) |
+| 4 | HS04 | `0x04` | 3 | **Right** USB-A, USB 2 lane (companion: XHC port 14) |
+| 6 | HS05 | `0x06` | 255 (internal) | ELAN WBF Fingerprint Sensor (`04F3:0C4F`) |
+| 7 | HS06 | `0x07` | 255 | Chicony HD Webcam (`04F2:B5C5`) |
+| 10 | HS07 | `0x0A` | 255 | Intel AX201 Bluetooth (`8087:0026`) |
+| 13 | SS01 | `0x0D` | 3 | Left USB-A SuperSpeed lane (companion of HS03) |
+| 14 | SS02 | `0x0E` | 3 | Right USB-A SuperSpeed lane (companion of HS04) |
+| 5, 8, 9, 11, 12, 15–18 | — | — | — | Empty (unmapped) |
+
+### TXHC controller — pcidebug `0:13:0` (PCI `0:0D:0` hex), 5-port root hub, SS-only
+
+| Phys port | macOS label | `port` byte | UsbConnector | Device / role |
+|---|---|---|---|---|
+| 2 | SS01 | `0x02` | 9 | Left rear USB-C SuperSpeed lane (companion of XHC HS02) |
+| 3 | SS02 | `0x03` | 9 | Left front USB-C SuperSpeed lane (companion of XHC HS01) |
+| 1, 4, 5 | — | — | — | Empty |
+
+### Companion pairing summary
+
+| Physical port | USB 2 lane | USB 3 SS lane |
+|---|---|---|
+| Left USB-A | XHC HS03 | XHC SS01 |
+| Right USB-A | XHC HS04 | XHC SS02 |
+| Left front USB-C | XHC HS01 | TXHC SS02 |
+| Left rear USB-C | XHC HS02 | TXHC SS01 |
+
+### Outstanding: SD card reader
+
+The SD reader is not enumerated on PCIe and not visible on any USB port at idle. It almost certainly only enumerates when media is inserted. To find its port: insert a microSD card in Windows, run USBTreeView, look for a newly-lit port — most likely XHC port 5/8/9/11/12/15–18 or TXHC port 1/4/5. Once the port is known, add a corresponding `HSnn`/`SSnn` entry to `USBMap.kext` with `UsbConnector = 255` (internal).
 
 ## Known ACPI Warnings (Benign)
 

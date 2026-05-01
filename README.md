@@ -1035,16 +1035,20 @@ System Settings → Displays:
 
 ### Performance reference numbers (for context)
 
-For comparing your machine's behavior to expected baselines on the same CPU:
+For comparing your machine's behavior to expected baselines on the same CPU class:
 
-| Benchmark | Spin 5 (i7-1065G7) | MBP16,2 (i7-1068NG7) typical |
-|---|---|---|
-| Cinebench R20 single-core | 450 | ~510 |
-| Cinebench R20 multi-core | 1568 | ~1850 |
-| PassMark single-thread | 2,279 | 2,309 |
-| PassMark CPU Mark | 8,112 | 9,164 |
+| Benchmark | Spin 5 (i7-1065G7) | MBP16,2 (i7-1068NG7) | Spin 5 delta | Source |
+|---|---|---|---|---|
+| Geekbench 5.5 single-core | 1,274 | 1,358 | **−6.2%** | [Notebookcheck SP513-54N review](https://www.notebookcheck.net/Acer-Spin-5-SP513-Laptop-Review-Sensibly-Optimized-and-Balanced-13-Inch-Convertible.489330.0.html) (this unit) vs [Geekbench Browser MBP 13" 2020](https://browser.geekbench.com/macs/macbook-pro-13-inch-mid-2020-intel-core-i7-1068ng7-2-3-ghz-4-cores) |
+| Geekbench 5 multi-core | 3,979 | 4,636 | **−14.2%** | (same sources) |
+| Cinebench R20 single-core | 450 | ~510 | ~−12% | Notebookcheck (this unit) vs typical MBP16,2 published runs |
+| Cinebench R20 multi-core | 1,568 | ~1,850 | ~−15% | (same) |
+| PassMark single-thread (CPU model aggregate, not this unit) | 2,279 | 2,309 | −1.3% | [PassMark CPU database for the i7-1065G7 / i7-1068NG7 SKUs](https://www.cpubenchmark.net/compare/Intel-Core-i7-1065G7-vs-Intel-Core-i7-1068NG7/3466vs3729) — crowdsourced averages across many machines, not this specific Spin 5 |
+| PassMark CPU Mark (CPU model aggregate) | 8,112 | 9,164 | −11.5% | (same) |
 
-The R20 multi-core gap (~15%) is wider than the PassMark gap (~12%), reflecting that the SP513-54N's cooling can't sustain peak turbo as long as the MBP's vapor chamber. Single-core is essentially identical (within run-to-run variance). Burst workloads feel the same; sustained renders/encodes will lag the MBP by 15–20%.
+**The Geekbench 5 numbers are the most reliable comparison** because they're directly measured on this exact Spin 5 unit by Notebookcheck and on the equivalent MBP16,2 in Geekbench's public browser. Single-core delta is ~6% (essentially identical for daily use), multi-core delta is ~14% — explained by the SP513-54N's cooling envelope holding ~15W vs the MBP's vapor chamber holding ~28W under sustained load.
+
+The PassMark and Cinebench rows are looser comparisons (PassMark is aggregate-by-CPU rather than this-unit-vs-that-unit), but they corroborate the same story: burst workloads feel the same, sustained renders/encodes lag the MBP by ~15%.
 
 ### Quick troubleshooting
 

@@ -28,6 +28,7 @@ This guide documents a complete installation including **every problem encounter
   - [Problem 6: Insyde Won't Show Boot Entry Name](#problem-6-insyde-firmware-wont-show-opencore-boot-entry-name)
   - [Problem 7: Bluetooth Firmware Not Loading](#problem-7-bluetooth-firmware-not-loading--v0-c0)
 - [USB Port Map](#usb-port-map-verified-2026-05-01)
+- [Thunderbolt 3 Status & Test Plan](#thunderbolt-3-status--test-plan)
 - [Credits](#credits)
 
 ## Hardware
@@ -70,7 +71,7 @@ This guide documents a complete installation including **every problem encounter
 
 | Feature | Status | Notes |
 |---|---|---|
-| Thunderbolt 3 Protocol | ⚠️ | USB-C data/charging/display works. TB3-specific features (docks, eGPU, daisy-chain) do not — would need custom SSDT for AppleThunderboltNHI |
+| Thunderbolt 3 Protocol | 🧪 | **Stack initializes correctly but not yet tested with real TB3 hardware.** Both Ice Lake iTBT controllers (PCI `0x8a17` and `0x8a0d`) are claimed by `AppleThunderboltNHIType4`; full Type4 stack (HAL → NHI → Controller → LocalNode → Port) is up and waiting for devices. The MacBookPro16,2 SMBIOS spoof matches the real Apple Ice Lake TB3 platform exactly, so Apple's drivers configure themselves correctly. See [Thunderbolt 3 Status & Test Plan](#thunderbolt-3-status--test-plan). |
 | Sleep/Wake | ❓ | Not fully tested. SSDTs for sleep are included (GPRW, PTSWAKTTS, NameS3-disable) |
 | Fingerprint Reader | ❌ | macOS has no driver for ELAN 0x04f3:0x0c4f. Visible as a generic USB device on USBMap label `HS05` (controller port 6); not usable as Touch ID. (`SSDT-ShutFPReaderDown.aml` was archived to `ACPI/_bak/` — see note below.) |
 | SD Card Reader | ❓ | Controller not visible on PCIe at idle (no card inserted). May surface on insert as USB or PCIe; verify with `system_profiler SPCardReaderDataType` after inserting a card |
@@ -779,6 +780,95 @@ Derived from Windows USBTreeView with USB 2 + USB 3 thumb drives in every extern
 ### Outstanding: SD card reader
 
 The SD reader is not enumerated on PCIe and not visible on any USB port at idle. It almost certainly only enumerates when media is inserted. To find its port: insert a microSD card in Windows, run USBTreeView, look for a newly-lit port — most likely XHC port 5/8/9/11/12/15–18 or TXHC port 1/4/5. Once the port is known, add a corresponding `HSnn`/`SSnn` entry to `USBMap.kext` with `UsbConnector = 255` (internal).
+
+## Thunderbolt 3 Status & Test Plan
+
+### Why this is promising on the SP513-54N
+
+The Acer Spin 5 SP513-54N uses the i7-1065G7 (Ice Lake U-series), which has **integrated Thunderbolt (iTBT)** — the TBT controllers are part of the CPU package itself, not a discrete Titan Ridge / Alpine Ridge chip. Two iTBT NHI controllers appear at PCI device IDs `0x8a17` (`pcidebug 0:13:2`) and `0x8a0d` (`pcidebug 0:13:3`).
+
+Crucially, **the reference Apple platform with this exact CPU + iTBT combination is the MacBookPro16,2** (13" MBP 2020). Since `config.plist` already spoofs `MacBookPro16,2`, Apple's `AppleThunderboltNHI` (v7.2.81) and `IOThunderboltFamily` (v9.3.3) configure themselves correctly without any per-machine SSDT patches.
+
+Earlier guidance about needing `SSDT-TbtOnPCH-XHCI`, force-power scripts, or `SSDT-TB3-HotPlug` does **not** apply here — those are for Type1/2/3 discrete TBT controllers (Alpine Ridge, Titan Ridge add-in cards). The Type4 stack handles iTBT natively.
+
+### Live verification (run any time on macOS)
+
+```bash
+# 1. Confirm both NHIs are visible to PCI
+system_profiler SPPCIDataType | grep -A8 "Ice Lake Thunderbolt 3 NHI"
+#   Expected: NHI #0 (Device 0x8a17, slot 0,13,2) and NHI #1 (Device 0x8a0d, slot 0,13,3),
+#             both with "Driver Installed: Yes"
+
+# 2. Confirm Apple's Thunderbolt kexts are loaded
+kextstat | grep -i thunder
+#   Expected: com.apple.iokit.IOThunderboltFamily (9.3.3)
+#             com.apple.driver.AppleThunderboltNHI (7.2.81)
+
+# 3. Confirm the full Type4 stack is built
+ioreg -lw 0 | grep "+-o.*Thunderbolt"
+#   Expected: 2× AppleThunderboltHALType4
+#             2× AppleThunderboltNHIType4
+#             2× IOThunderboltControllerType4
+#             2× IOThunderboltLocalNode
+#             2× IOThunderboltPort
+
+# 4. With NO TBT device connected, this will say "No drivers are loaded"
+#    — that's misleading; it actually means "no peripheral attached"
+system_profiler SPThunderboltDataType
+```
+
+If steps 1–3 pass, the host TBT stack is healthy and ready. The "no drivers loaded" message in step 4 only changes when a TBT device is plugged in.
+
+### Test plan with real TBT3 hardware
+
+Borrow or buy any one of the following (cheap → expensive):
+
+| Device | Cost | What it tests |
+|---|---|---|
+| TB3 SSD (e.g. Samsung X5, OWC Envoy Pro) | ~$100 | PCIe tunneling, NVMe over TBT |
+| TB3 dock (CalDigit TS3 Plus, OWC TB3 Dock) | ~$200 | DP tunneling, USB hub passthrough, Ethernet |
+| TB3 eGPU enclosure + AMD GPU (RX 580 / 5700 XT) | ~$400 | Full PCIe x4, GPU bind, Metal display path |
+
+Plug the device into either USB-C port. Then capture:
+
+```bash
+# Watch the kernel log live as you plug in
+log stream --predicate 'subsystem == "com.apple.iokit.IOThunderboltFamily" OR subsystem == "com.apple.iokit.IOPCIFamily"' --style syslog
+
+# Or after the fact
+log show --predicate 'subsystem == "com.apple.iokit.IOThunderboltFamily"' --last 5m
+
+# Check what enumerated under the TBT bus
+system_profiler SPThunderboltDataType
+ioreg -lw 0 | grep -A5 "IOThunderboltSwitch\|AppleThunderboltDPInAdapter\|IOThunderboltPCIDownAdapter"
+```
+
+### Pass criteria
+
+- ✅ **Cold-plug** (boot with device attached): `IOThunderboltSwitch` nub appears under one of the local nodes; the device-specific child (e.g. NVMe controller, USB hub, GPU) shows up at the bottom of the chain.
+- 🧪 **Hot-plug** (insert after boot): same as cold-plug. iTBT/Type4 *should* support this natively, unlike the older Type1–3 stacks. If hot-plug fails but cold-plug works, that's a known iTBT-on-Hackintosh quirk and not a deal-breaker.
+- 🧪 **Sleep/wake**: with TBT device attached, sleep the laptop, wake it. Device should re-enumerate. If it doesn't, that's a power-management issue separate from basic functionality.
+- ❓ **Charging passthrough through TBT dock**: depends on dock's PD profile and whether macOS's PD driver claims the channel. Not a pure TBT issue.
+
+### Realistic eGPU prospects
+
+If basic TBT enumeration works:
+- **AMD eGPU is the supported path.** RX 580 (Polaris), Vega 56/64, RX 5700 XT (Navi). Apple's drivers are native, Metal works, no driver hacks needed. Apple's official eGPU support list (until 2018) was AMD-only, and MBP16,2 was sold as eGPU-capable.
+- **NVIDIA is still a no-go** for display/Metal. The third-party TinyGPU compute-only driver (tinygrad/Tiny Corp, 2026) targets Apple Silicon + Thunderbolt 4; Intel Mac and Hackintosh paths are unverified. Don't count on it.
+
+### What still might break TBT in practice
+
+Even with the stack initialized:
+1. **BIOS Thunderbolt settings.** Some Insyde firmwares default the TBT controller to "Pre-Boot ACL Disabled" or "Security Level: User Authorization" which may interfere with macOS's automatic "always allow" approach. Check BIOS for any Thunderbolt section before testing.
+2. **Power gating.** iTBT controllers can deep-sleep when idle. macOS handles this on real Macs; on Hackintosh it usually works but watch for "TBT controller link down" in `log stream` after sleep.
+3. **DROM (Device ROM) on cheap TBT devices.** Some no-name TBT3 enclosures have malformed DROM data that real Macs reject. Stick with Apple-friendly brands (CalDigit, OWC, Razer, Akitio, Sonnet) for first tests.
+
+### What to update here when you test
+
+After your first successful TBT device enumeration:
+- Flip the status row in [What Works](#what-works) from 🧪 to ✅ (or a granular set: `✅ cold-plug, ⚠️ hot-plug, ❌ sleep/wake` etc.)
+- Add a "Tested TBT devices" subsection listing what worked
+- If you go down the eGPU path, document the GPU model, enclosure, boot-args (`-wegnoegpu` etc.), and any IOReg evidence
 
 ## Known ACPI Warnings (Benign)
 

@@ -71,7 +71,7 @@ This guide documents a complete installation including **every problem encounter
 |---|---|---|
 | Thunderbolt 3 Protocol | ⚠️ | USB-C data/charging/display works. TB3-specific features (docks, eGPU, daisy-chain) do not — would need custom SSDT for AppleThunderboltNHI |
 | Sleep/Wake | ❓ | Not fully tested. SSDTs for sleep are included (GPRW, PTSWAKTTS, NameS3-disable) |
-| Fingerprint Reader | ❌ | Disabled intentionally via SSDT-ShutFPReaderDown. Not supported by macOS |
+| Fingerprint Reader | ❌ | macOS has no driver for ELAN 0x04f3:0x0c4f. Visible as a generic USB device on HS05; not usable as Touch ID. (`SSDT-ShutFPReaderDown.aml` was archived to `ACPI/_bak/` — see note below.) |
 | SD Card Reader | ❓ | Controller not visible on PCIe at idle (no card inserted). May surface on insert as USB or PCIe; verify with `system_profiler SPCardReaderDataType` after inserting a card |
 
 ## BIOS Settings
@@ -180,7 +180,6 @@ keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod
 | SSDT-AWAC | Fix incompatible AWAC real-time clock |
 | SSDT-PNLF-CFL | Backlight control for Coffee Lake+ framebuffers |
 | SSDT-ALS0 | Fake Ambient Light Sensor (enables auto-brightness slider) |
-| SSDT-ShutFPReaderDown | Disable fingerprint reader (unsupported in macOS) |
 | SSDT-SBUS | SMBus device injection |
 | SSDT-DMAC | Missing DMA Controller definition |
 | SSDT-MCHC | Missing Memory Controller Hub definition |
@@ -196,6 +195,17 @@ keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod
 | SSDT-GPI0-GPHD-TPDM | GPIO setup for I2C HID devices |
 | SSDT-PTSWAKTTS-iGPU | Sleep/wake hooks for iGPU |
 | SSDT-MEM2 | Reserve memory regions for macOS |
+
+### Note on `SSDT-ShutFPReaderDown.aml` (archived in `ACPI/_bak/`)
+
+This file ships with many Acer/Lenovo Ice Lake EFIs and claims to disable the fingerprint reader. On Sonoma it does nothing useful, for two independent reasons:
+
+1. **Wrong target port.** It returns `_STA = 0` for `\_SB.PCI0.XHC.RHUB.HS06`, but on this hardware HS06 is the webcam — the ELAN fingerprint reader is on HS05.
+2. **Wrong mechanism.** macOS's xHCI driver creates port nubs from the controller's hardware port registers, not from the ACPI namespace. ACPI `_STA = 0` only hides the device from the ACPI tree; the underlying USB port still enumerates and devices still attach. The dortania docs reflect this — modern guidance is to disable ports in the USBMap (`UsbConnector` / map exclusion), not via ACPI SSDTs.
+
+Both webcam (HS06) and fingerprint reader (HS05) appear in `system_profiler SPUSBDataType` regardless of this SSDT. The fingerprint reader is "not working" only in the sense that macOS has no driver for ELAN `0x04f3:0x0c4f` — it's never offered as a Touch ID source.
+
+The SSDT is moved to `EFI/OC/ACPI/_bak/` and disabled in `config.plist > ACPI > Add`. If you want the FP reader actually shut down for power/sleep reasons, the right fix is removing HS05 from `USBMap.kext` or marking it disabled there.
 
 ## Kexts
 

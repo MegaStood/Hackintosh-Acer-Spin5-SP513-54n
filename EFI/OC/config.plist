@@ -88,9 +88,9 @@
 			</dict>
 			<dict>
 				<key>Comment</key>
-				<string>Fingerprint reader OFF</string>
+				<string>No-op on Sonoma; targeted wrong port (HS06 not HS05); moved to _bak</string>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>Path</key>
 				<string>SSDT-ShutFPReaderDown.aml</string>
 			</dict>

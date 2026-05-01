@@ -977,7 +977,7 @@ If you're docked at a desk most of the time, a flicker-free external display via
 
 macOS detects the BOE NE135FBM-N41 panel and auto-generates a profile at `/Library/ColorSync/Profiles/Displays/Unknown Display-<UUID>.icc` — written by Apple ("Copyright Apple Inc."), ~3 KB, derived purely from EDID. It uses BOE's *self-reported* gamut and primaries with no calibration measurements, generic gamma 2.2, and EDID-claimed D65 white point. This is the dropdown's "Unknown Display" option and the **default** active profile.
 
-The calibrated alternative is **Notebookcheck's freely shared CQ profile**: an X-Rite-measured ICC (`Display/BOE_CQ_NE135FBM_N41.icm`, 11 KB, included in this repo) which clips back to true sRGB primaries and uses a measured gamma curve. Notebookcheck publishes these profiles for free as part of their laptop reviews — credit and thanks to them.
+The calibrated alternative is **Notebookcheck's freely shared CQ profile**: an X-Rite-measured ICC (`Display/BOE_CQ_NE135FBM_N41.icm`, 11 KB, included in this repo) which clips back to true sRGB primaries and uses a measured gamma curve. Notebookcheck publishes these profiles for free as part of their laptop reviews — credit and thanks to them. Source: [Acer Spin 5 SP513-54N review (Notebookcheck)](https://www.notebookcheck.net/Acer-Spin-5-SP513-Laptop-Review-Sensibly-Optimized-and-Balanced-13-Inch-Convertible.489330.0.html).
 
 **Installation:**
 
@@ -1089,7 +1089,7 @@ These are debugging aids that slow boot and show verbose text. Keep everything e
 - [wfx1024](https://github.com/wfx1024/Acer-Spin-5-SP513-54N-hackintosh) — Reference EFI for this model
 - [tunglamvghy](https://github.com/tunglamvghy/AcerSpin5-SP513-54N-hackintosh) — Reference EFI for this model
 - [Zhihu article (zhuanlan.zhihu.com/p/438210561)](https://zhuanlan.zhihu.com/p/438210561) — MMIO 0xFF600000 fix for Acer Ice Lake EC issue
-- [Notebookcheck](https://www.notebookcheck.net/) — X-Rite-calibrated `BOE_CQ_NE135FBM_N41.icm` color profile (freely shared as part of their SP513-54N review) and PWM/panel measurement data
+- [Notebookcheck — Acer Spin 5 SP513-54N review](https://www.notebookcheck.net/Acer-Spin-5-SP513-Laptop-Review-Sensibly-Optimized-and-Balanced-13-Inch-Convertible.489330.0.html) — X-Rite-calibrated `BOE_CQ_NE135FBM_N41.icm` color profile (freely shared as part of the review), PWM measurements (196 Hz, threshold ~90%), and Cinebench R20 baseline numbers
 
 ## License
 

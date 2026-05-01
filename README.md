@@ -875,7 +875,9 @@ After your first successful TBT device enumeration:
 
 ### The hardware problem
 
-The SP513-54N's IPS panel (13.5", 2256×1504, 3:2) uses **PWM backlight dimming at 196 Hz** for every brightness level **below 100%**. PWM eliminates entirely only when the brightness slider is at maximum.
+The SP513-54N ships with a **BOE NE135FBM-N41** panel (also stamped `BOE08BC`) — 13.5", 2256×1504 IPS, 415 cd/m² typical, 1500:1 contrast, 100% sRGB, eDP 40-pin 2-lane connector (eDP 1.4 HBR1). The same panel is used in the Acer Swift 3 SF313-53 (parts cross over between the two models).
+
+It uses **PWM backlight dimming at 196 Hz** for every brightness level **below ~90%** (per Notebookcheck's measurement). PWM only disengages once the brightness slider is in roughly the top 10% of its range, so any "fix" is really about staying above that threshold.
 
 196 Hz is in the eye-strain zone — high enough that you don't *consciously* see flicker, low enough that PWM-sensitive eyes register it as fatigue, headache, or "tired eyes" after extended sessions. Roughly 10–20% of users are sensitive; the rest never notice.
 
@@ -928,8 +930,9 @@ LaptopMedia sells a panel-calibrated `.icc` profile (~$10) tuned for this exact 
 
 The original panel can be physically swapped. If you're going down this route, look for:
 - 13.5" 2256×1504 IPS, 3:2 aspect ratio
-- eDP connector matching the original (40-pin standard for this generation)
+- eDP **40-pin, 2-lane, eDP 1.4 HBR1** connector (matches the original BOE NE135FBM-N41)
 - DC dimming or high-frequency PWM (>2400 Hz) in the spec sheet
+- Compatible drop-ins should mechanically/electrically include any panel listed for the Acer Swift 3 SF313-53 (same panel, same chassis family)
 
 > **TODO:** document successful replacement panels here once tested. Owner's notes (panel model, eDP pinout match, brightness curve, color gamut, where bought) would be welcomed contribution.
 
@@ -941,10 +944,25 @@ If you're docked at a desk most of the time, a flicker-free external display via
 
 ```
 System Settings → Displays:
-  ☑ Brightness slider: 100% (rightmost)
+  ☑ Brightness slider: 100% (rightmost) — keep above ~90% threshold
   ☐ Automatically adjust brightness   ← MUST be unchecked
   ☑ Night Shift → Schedule: Custom, full day, ¼ slider warmth
 ```
+
+> **Note on the PWM threshold:** Notebookcheck measured PWM engaging at brightness levels below ~90%, not below 100%. So you have a small margin — if 100% is uncomfortably bright in dark rooms, you can drop one or two notches without re-engaging PWM. But err on the side of higher; the safe rule is "keep the slider in the rightmost 10%." The transition isn't crisp; once PWM kicks in, it stays at 196 Hz across the rest of the dim range.
+
+### Performance reference numbers (for context)
+
+For comparing your machine's behavior to expected baselines on the same CPU:
+
+| Benchmark | Spin 5 (i7-1065G7) | MBP16,2 (i7-1068NG7) typical |
+|---|---|---|
+| Cinebench R20 single-core | 450 | ~510 |
+| Cinebench R20 multi-core | 1568 | ~1850 |
+| PassMark single-thread | 2,279 | 2,309 |
+| PassMark CPU Mark | 8,112 | 9,164 |
+
+The R20 multi-core gap (~15%) is wider than the PassMark gap (~12%), reflecting that the SP513-54N's cooling can't sustain peak turbo as long as the MBP's vapor chamber. Single-core is essentially identical (within run-to-run variance). Burst workloads feel the same; sustained renders/encodes will lag the MBP by 15–20%.
 
 ### Quick troubleshooting
 

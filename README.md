@@ -59,6 +59,7 @@ This guide documents a complete installation including **every problem encounter
 | Battery Readout | ✅ | Via ECEnabler + SMCBatteryManager |
 | Audio (speakers + mic) | ✅ | Via AppleALC, alcid=13 |
 | USB-C Ports | ✅ | Both ports, data + charging + display output |
+| Bluetooth | ✅ | Via OpenIntelWireless stack — see [Problem 7](#problem-7-bluetooth-firmware-not-loading--v0-c0) for the USBMap `model` gating fix and the three required `-btlfx*` boot-args |
 | NVMe Storage | ✅ | Via NVMeFix |
 | Brightness Keys | ✅ | Via BrightnessKeys + SSDT-PNLF |
 | Accelerometer (Sensor Hub) | ✅ | Via VoodooI2C |
@@ -68,10 +69,10 @@ This guide documents a complete installation including **every problem encounter
 
 | Feature | Status | Notes |
 |---|---|---|
-| Bluetooth | ❌ | Intel BT USB device not visible — USBMap needs to include the internal BT port. Fixable by regenerating USBMap.kext with Hackintool |
 | Thunderbolt 3 Protocol | ⚠️ | USB-C data/charging/display works. TB3-specific features (docks, eGPU, daisy-chain) do not — would need custom SSDT for AppleThunderboltNHI |
 | Sleep/Wake | ❓ | Not fully tested. SSDTs for sleep are included (GPRW, PTSWAKTTS, NameS3-disable) |
 | Fingerprint Reader | ❌ | Disabled intentionally via SSDT-ShutFPReaderDown. Not supported by macOS |
+| SD Card Reader | ❓ | Controller not visible on PCIe at idle (no card inserted). May surface on insert as USB or PCIe; verify with `system_profiler SPCardReaderDataType` after inserting a card |
 
 ## BIOS Settings
 
@@ -147,14 +148,16 @@ Also set `WriteFlash = true` to ensure NVRAM changes persist to firmware flash.
 ### Boot Arguments
 
 ```
-keepsyms=1 debug=0x100 -btlfxallowanyaddr agdpmod=vit9696 darkwake=0 igfxonln=1 -noDC9 forceRenderStandby=0 alcid=13 -v -no_compat_check
+keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod=vit9696 darkwake=0 igfxonln=1 -noDC9 forceRenderStandby=0 alcid=13 -v -no_compat_check
 ```
 
 | Argument | Purpose |
 |---|---|
 | `keepsyms=1` | Keep kernel symbols for readable panic logs |
 | `debug=0x100` | Prevent auto-reboot on panic |
-| `-btlfxallowanyaddr` | Allow BrcmPatchRAM to work at any address |
+| `-btlfxallowanyaddr` | BlueToolFixup: allow BT controller at any USB address |
+| `-btlfxboardid` | BlueToolFixup: bypass board-id check that routes T2-era SMBIOS to UART transport |
+| `-btlfxnvramcheck` | BlueToolFixup: skip the NVRAM `bluetoothInternalControllerInfo` precondition |
 | `agdpmod=vit9696` | Disable Apple GPU Display Policy board-id check |
 | `darkwake=0` | Disable dark wake (prevents partial-wake issues) |
 | `igfxonln=1` | Force all display connectors online (WhateverGreen) |
@@ -163,6 +166,8 @@ keepsyms=1 debug=0x100 -btlfxallowanyaddr agdpmod=vit9696 darkwake=0 igfxonln=1 
 | `alcid=13` | AppleALC layout ID for audio codec |
 | `-v` | Verbose boot (remove once stable) |
 | `-no_compat_check` | Skip PlatformSupport.plist board-id validation |
+
+**Note on the three `-btlfx*` flags:** All three are required together on T2-era SMBIOS (e.g., MacBookPro16,2). With only `-btlfxallowanyaddr`, `bluetoothd` still selects UART transport because the board-id and NVRAM checks veto USB. Adding `-btlfxboardid` and `-btlfxnvramcheck` flips bluetoothd to the USB transport path, which is what the OpenIntelWireless stack actually provides for AX201.
 
 ## ACPI SSDTs
 
@@ -625,7 +630,7 @@ Misc > Boot > LauncherOption:  Full → Short
 
 ### Problem 7: Bluetooth Firmware Not Loading — v0 c0
 
-**Symptom:** `system_profiler SPBluetoothDataType` shows:
+**Symptom (macOS 14.8.5):** `system_profiler SPBluetoothDataType` shows:
 
 ```
 Address: NULL
@@ -634,22 +639,63 @@ Firmware Version: v0 c0
 Transport: UART
 ```
 
-All three Bluetooth kexts are enabled (`IntelBluetoothFirmware`, `IntelBTPatcher`, `BlueToolFixup`) but firmware never uploads.
+All three Bluetooth kexts are enabled (`IntelBluetoothFirmware`, `IntelBTPatcher`, `BlueToolFixup`) but firmware never uploads. `system_profiler SPUSBDataType` shows no Intel Bluetooth device (vendor `0x8087`) — the BT chip is invisible to macOS.
 
-**How to verify:** Run `system_profiler SPUSBDataType`. If no Intel Bluetooth device (vendor `8087`) appears in the USB device list, the BT chip is invisible to macOS.
+This regression appeared specifically on the macOS 14.7.5 → 14.8.5 update; the same symptom hit a separate i7-8250U Hackintosh on the same OS bump. Both with T2-era SMBIOS.
 
-**Root cause:** The `USBMap.kext` defines which USB ports are active in macOS. When the USB map was generated, the internal Intel Bluetooth USB port wasn't included. Intel CNVi Bluetooth on Ice Lake appears as an internal USB device — if its port isn't mapped, macOS never sees the controller, and `IntelBluetoothFirmware.kext` has nothing to upload firmware to.
+**How to verify:** After a boot, run:
 
-The `Transport: UART` in the output is a red herring — it's a fallback value that Apple's Bluetooth framework reports when no real controller is found.
+```bash
+ioreg -p IOService -lw0 -n XHC | grep -E '\+-o (HS|SS)[0-9]+'
+```
 
-**Fix:**
+You'll see only 4 HS + 2 SS ports under XHC even though the controller has 14. The internal-facing ports (where AX201 BT, webcam, IR, fingerprint live) are absent. **Even with `XhciPortLimit = true`**, those ports never appear without a matching USBMap merge.
 
-1. Temporarily disable `USBMap.kext` in `config.plist`
-2. Reboot and run `system_profiler SPUSBDataType`
-3. The Intel Bluetooth device (vendor `8087`) should now appear — note which port it's on
-4. Use [Hackintool](https://github.com/benbaker76/Hackintool) to regenerate `USBMap.kext` including the BT port (set connector type to `255` = internal)
-5. Replace the old `USBMap.kext` with the new one
-6. Re-enable `USBMap.kext`
+**Root cause: USBMap `model` gating.**
+
+The codeless `USBMap.kext` (USBToolBox v1.1) embeds a `model` key inside each `IOKitPersonality`. `AppleUSBHostMergeProperties` honors that `model` key as a gating predicate (the same mechanism Apple's stock USBPorts.kext uses to ship per-Mac-model port maps in one bundle). If your OpenCore SMBIOS doesn't match the `model` value, the personality silently never matches — no merge, port-count stays at the native xHCI default (6 on this machine), and internal USB devices never enumerate.
+
+For maps generated by USBToolBox, the `model` is whatever SMBIOS was selected at generation time (often `MacBookAir9,1`). If your live SMBIOS differs (e.g., `MacBookPro16,2` for this build), the merge silently dies.
+
+`Transport: UART` in the bluetoothd output is a separate symptom — T2-era SMBIOS routes BT to UART transport via Apple's board-id table, regardless of the USBMap state. Even after USB enumeration is fixed, you still need the three `-btlfx*` boot-args (see [Boot Arguments](#boot-arguments)) to flip `bluetoothd` from UART to USB.
+
+**Fix: edit USBMap.kext to match your SMBIOS.**
+
+```bash
+# In your repo
+grep -n "model" EFI/OC/Kexts/USBMap.kext/Contents/Info.plist
+# Should print two lines, e.g.:
+#   <string>MacBookAir9,1</string>
+#   <string>MacBookAir9,1</string>
+
+# Replace with your live SMBIOS (this build uses MacBookPro16,2)
+# Both XHC and TXHC personalities have their own model key — change BOTH
+```
+
+After fixing `model`, copy the updated kext to your ESP and reboot. To verify the merge applied:
+
+```bash
+ioreg -p IOService -lw0 -n XHC | grep -E '\+-o (HS|SS)[0-9]+'
+# Should now show 14 ports, including HS05/HS06/HS07 + SS01/SS02 under XHC
+
+system_profiler SPUSBDataType | grep -B 2 -A 10 "0x8087"
+# Should now show Intel BT (0x8087:0x0026) at LocationID 0x14700000 (HS07)
+```
+
+Then check that bluetoothd actually came up:
+
+```bash
+system_profiler SPBluetoothDataType | head -20
+# State: On, Address: a real BD address, Transport: USB
+```
+
+**Why this matters:** Many published Acer/HP/Lenovo Ice Lake configurations were built with USBToolBox under one SMBIOS and shipped with a different SMBIOS in `config.plist`. The map appears correct (right port-count, right UsbConnector tags), and on macOS versions before 14.8 the `model` mismatch was less strictly enforced. macOS 14.8 tightened the merge gating. This is the most likely root cause for "BT broke after the 14.7 → 14.8 update" reports on this hardware family.
+
+**Cosmetic non-issues — do not investigate:**
+
+- `system_profiler` reports `Chipset: THIRD_PARTY_DONGLE` and `Vendor ID: 0x004C (Apple)` for the BT controller after the fix. Normal for OpenIntelWireless transport masquerade.
+- NVRAM `bluetoothInternalControllerInfo` populated but all zeros. Harmless on T2-spoofed SMBIOS.
+- First `bluetoothd` init pass on boot can fail with "Still cannot find USB Bluetooth Controller after 15 seconds"; the auto-restart succeeds. Race between kext stack ready and `bluetoothd` init timeout.
 
 **Also important — kext load order:** The three Bluetooth kexts must load in this sequence:
 

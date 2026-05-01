@@ -873,6 +873,17 @@ After your first successful TBT device enumeration:
 
 ## Display: PWM Flicker & Mitigation
 
+### Working configuration (this build)
+
+```
+Brightness: 61/64 (~95%) — set with Shift+Option+F1 fine-step
+Auto-brightness: OFF
+Color Profile: "Unknown Display" (macOS auto-generated default — vivid look)
+Night Shift: Custom schedule, all day, ¼ slider from the right
+```
+
+This is what's actually in use here. The rest of the section explains why.
+
 ### The hardware problem
 
 The SP513-54N ships with a **BOE NE135FBM-N41** panel (also stamped `BOE08BC`) — 13.5", 2256×1504 IPS, 415 cd/m² typical, 1500:1 contrast, 100% sRGB, eDP 40-pin 2-lane connector (eDP 1.4 HBR1). The same panel is used in the Acer Swift 3 SF313-53 (parts cross over between the two models).
@@ -893,21 +904,43 @@ This is a cost-engineering choice — DC dimming requires more sophisticated bac
 
 PWM is a hardware behavior of the LED backlight controller — pulsing the LED on/off to dim. Software (ICC profiles, Night Shift, f.lux, gamma adjustments) can only manipulate the *image data sent to the panel*, not how the LED is driven.
 
-Every "anti-PWM software solution" is really a **PWM-avoidance** workaround: keep the brightness at 100% (where PWM is off on this panel), then reduce *perceived* intensity through color/gamma manipulation (warmer color temperature, lower white point, reduced blue channel).
+Every "anti-PWM software solution" is really a **PWM-avoidance** workaround: keep the brightness above the ~90% threshold (where PWM is off on this panel), then reduce *perceived* intensity through color/gamma manipulation (warmer color temperature, lower white point, reduced blue channel).
+
+### The fine-step brightness trick (Shift+Option+F1/F2)
+
+macOS by default has 16 brightness levels — F1/F2 step 1/16 (6.25%) at a time. From 100%, one F1 press = 93.75%, which is still safely above the 90% PWM threshold but already crossing into the perceptual PWM-risk zone for some users.
+
+Holding **Shift + Option** while pressing F1/F2 unlocks **1/64-step** fine adjustment (1.5625% per press). The on-screen HUD shows the exact level (e.g., "61"). From 100% (= 64/64):
+- 1 press of Shift+Option+F1 → 63/64 ≈ **98.4%**
+- 3 presses → 61/64 ≈ **95.3%** ← the safe sweet-spot
+- 4 presses → 60/64 = **93.75%** (still above 90% threshold but margin is shrinking)
+
+95% is the recommended landing zone: comfortably above PWM, slight reduction in LED wear vs 100%, no perceptible difference from full brightness for daily use.
+
+### LED longevity vs PWM avoidance
+
+A common worry: "Won't running at 100% all the time wear out the backlight?"
+
+In practice no — backlight LEDs in this class of panel are rated for ~50,000 hours to L50 (50% brightness loss) at maximum. Even continuous max-brightness use gives you 5+ years before noticeable degradation, far outliving the laptop's useful life. Running at 95% instead of 100% saves a small linear amount of LED wear (~5%) and a similar fraction of battery — worth taking, but not worth automating or stressing about.
+
+What the panel actually fails from in real-world use: eDP cable cracks at the hinge (mechanical), polarizer film yellowing (heat over years), or dead pixels from touchscreen pressure. LED lifespan is not the bottleneck.
 
 ### macOS solutions, ranked
 
-#### 1. Free / built-in: 100% brightness + Night Shift
+#### 1. Free / built-in: 95% fine-step brightness + Night Shift ← what this build uses
 
-The cheapest path. Works out of the box on macOS Sonoma 14.x.
+Works out of the box on macOS Sonoma 14.x.
 
-1. **System Settings → Displays:** drag brightness slider all the way to the right (100%). **Uncheck "Automatically adjust brightness"** — otherwise the ambient sensor will dim the panel and re-engage PWM.
-2. **System Settings → Displays → Night Shift…:**
+1. **System Settings → Displays:** **uncheck "Automatically adjust brightness"** — otherwise the ambient sensor will dim the panel below 90% and re-engage PWM.
+2. Set brightness to ~95% via fine-step:
+   - From whatever level, press F2 repeatedly to reach 100% (HUD shows "64")
+   - Then hold **Shift + Option** and press **F1 three times** → HUD shows "61" (≈95.3%)
+3. **System Settings → Displays → Night Shift…:**
    - Schedule: **Custom, 00:00 to 23:59** (always on)
-   - Color Temperature slider: start at **¼ from the right** for mild warmth; nudge warmer if your eyes still feel strained
-3. (Optional) Drag Night Shift into the menu bar via System Settings → Control Center → Display → "Show in Menu Bar" for fast toggling.
+   - Color Temperature slider: **¼ from the right** for mild warmth; nudge warmer if eyes still feel strained
+4. (Optional) Drag Night Shift into the menu bar via System Settings → Control Center → Display → "Show in Menu Bar" for fast toggling.
 
-This combo keeps the backlight at 100% (no PWM) while reducing perceived intensity via warm shift. Costs nothing.
+This combo keeps the backlight above the ~90% PWM threshold while reducing perceived intensity via warm shift, and saves a small but real amount of LED wear and battery vs strict 100%. Costs nothing.
 
 #### 2. Free / third-party: f.lux
 
@@ -939,6 +972,55 @@ The original panel can be physically swapped. If you're going down this route, l
 #### 5. External monitor
 
 If you're docked at a desk most of the time, a flicker-free external display via USB-C or (once we test) Thunderbolt 3 sidesteps the panel entirely. See [Thunderbolt 3 Status & Test Plan](#thunderbolt-3-status--test-plan).
+
+### Color profile choice: "Unknown Display" vs calibrated CQ
+
+macOS detects the BOE NE135FBM-N41 panel and auto-generates a profile at `/Library/ColorSync/Profiles/Displays/Unknown Display-<UUID>.icc` — written by Apple ("Copyright Apple Inc."), ~3 KB, derived purely from EDID. It uses BOE's *self-reported* gamut and primaries with no calibration measurements, generic gamma 2.2, and EDID-claimed D65 white point. This is the dropdown's "Unknown Display" option and the **default** active profile.
+
+The calibrated alternative is LaptopMedia's CQ profile: an X-Rite-measured ICC (`Display/BOE_CQ_NE135FBM_N41.icm`, 11 KB, included in this repo) which clips back to true sRGB primaries and uses a measured gamma curve.
+
+**Installation:**
+
+```bash
+# 1. Copy from this repo to the user-level ColorSync profile folder
+mkdir -p ~/Library/ColorSync/Profiles
+cp Display/BOE_CQ_NE135FBM_N41.icm ~/Library/ColorSync/Profiles/
+
+# 2. Verify it landed
+ls -la ~/Library/ColorSync/Profiles/
+```
+
+**Activation (GUI):**
+
+1. **System Settings → Displays**
+2. Click the **Color Profile** dropdown
+3. **Uncheck "Show profiles for this display only"** — the LaptopMedia profile lacks a matching EDID hash, so it's hidden by default
+4. Select **"BOE CQ_      NE135FBM_N41_04-08-2020.icm"** from the list (the embedded description string, with the spaces preserved)
+5. Screen will visibly shift toward more accurate sRGB — colors look muted compared to default; this is correct (see below)
+
+**If the profile still doesn't appear:**
+
+- Quit System Settings entirely (⌘+Q) and reopen — macOS caches the profile list and only re-scans on app launch
+- Try a system-wide install: `sudo cp Display/BOE_CQ_NE135FBM_N41.icm /Library/ColorSync/Profiles/`
+- Last resort: open ColorSync Utility (`/System/Applications/Utilities/ColorSync Utility.app`), File → Open the `.icm` file, then drag it onto the built-in display under Devices → Displays
+
+**Verify it's active:**
+
+```bash
+# GUI: ColorSync Utility → Devices → Displays → built-in display → "Current Profile"
+open -a "ColorSync Utility"
+```
+
+**Visible difference:** Unknown looks vivid/punchy; CQ looks muted by comparison. Vivid is the panel running with BOE's optimistic gamut claim taken at face value; CQ is what sRGB content is *supposed* to look like.
+
+| Profile | When to use |
+|---|---|
+| Unknown Display (default) | General use, web, video, gaming — punchier and more enjoyable for content consumption |
+| BOE CQ NE135FBM N41 | Photo/design/video color work, anything that needs to match print or web standards |
+
+**This build uses the default "Unknown Display" profile** — color accuracy isn't a daily-use priority on this machine, and the vivid look is preferred. The CQ profile is kept available for swap-in when needed. Neither helps with PWM (color profiles only manipulate image data, not the LED backlight); brightness + Night Shift handle that independently.
+
+Note: LaptopMedia also sells a separate **Health-Guard** variant (different `.icm` file) tuned specifically for PWM-avoidance — warmer + dimmer-feeling while staying at high backlight. Not used here, but worth knowing about if Night Shift's max warmth ever feels insufficient.
 
 ### Settings to verify
 

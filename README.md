@@ -977,7 +977,7 @@ If you're docked at a desk most of the time, a flicker-free external display via
 
 macOS detects the BOE NE135FBM-N41 panel and auto-generates a profile at `/Library/ColorSync/Profiles/Displays/Unknown Display-<UUID>.icc` — written by Apple ("Copyright Apple Inc."), ~3 KB, derived purely from EDID. It uses BOE's *self-reported* gamut and primaries with no calibration measurements, generic gamma 2.2, and EDID-claimed D65 white point. This is the dropdown's "Unknown Display" option and the **default** active profile.
 
-The calibrated alternative is LaptopMedia's CQ profile: an X-Rite-measured ICC (`Display/BOE_CQ_NE135FBM_N41.icm`, 11 KB, included in this repo) which clips back to true sRGB primaries and uses a measured gamma curve.
+The calibrated alternative is **Notebookcheck's freely shared CQ profile**: an X-Rite-measured ICC (`Display/BOE_CQ_NE135FBM_N41.icm`, 11 KB, included in this repo) which clips back to true sRGB primaries and uses a measured gamma curve. Notebookcheck publishes these profiles for free as part of their laptop reviews — credit and thanks to them.
 
 **Installation:**
 
@@ -994,7 +994,7 @@ ls -la ~/Library/ColorSync/Profiles/
 
 1. **System Settings → Displays**
 2. Click the **Color Profile** dropdown
-3. **Uncheck "Show profiles for this display only"** — the LaptopMedia profile lacks a matching EDID hash, so it's hidden by default
+3. **Uncheck "Show profiles for this display only"** — the Notebookcheck profile lacks a matching EDID hash, so it's hidden by default
 4. Select **"BOE CQ_      NE135FBM_N41_04-08-2020.icm"** from the list (the embedded description string, with the spaces preserved)
 5. Screen will visibly shift toward more accurate sRGB — colors look muted compared to default; this is correct (see below)
 
@@ -1089,6 +1089,7 @@ These are debugging aids that slow boot and show verbose text. Keep everything e
 - [wfx1024](https://github.com/wfx1024/Acer-Spin-5-SP513-54N-hackintosh) — Reference EFI for this model
 - [tunglamvghy](https://github.com/tunglamvghy/AcerSpin5-SP513-54N-hackintosh) — Reference EFI for this model
 - [Zhihu article (zhuanlan.zhihu.com/p/438210561)](https://zhuanlan.zhihu.com/p/438210561) — MMIO 0xFF600000 fix for Acer Ice Lake EC issue
+- [Notebookcheck](https://www.notebookcheck.net/) — X-Rite-calibrated `BOE_CQ_NE135FBM_N41.icm` color profile (freely shared as part of their SP513-54N review) and PWM/panel measurement data
 
 ## License
 

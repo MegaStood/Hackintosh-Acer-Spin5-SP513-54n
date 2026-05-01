@@ -854,8 +854,59 @@ ioreg -lw 0 | grep -A5 "IOThunderboltSwitch\|AppleThunderboltDPInAdapter\|IOThun
 ### Realistic eGPU prospects
 
 If basic TBT enumeration works:
-- **AMD eGPU is the supported path.** RX 580 (Polaris), Vega 56/64, RX 5700 XT (Navi). Apple's drivers are native, Metal works, no driver hacks needed. Apple's official eGPU support list (until 2018) was AMD-only, and MBP16,2 was sold as eGPU-capable.
-- **NVIDIA is still a no-go** for display/Metal. The third-party TinyGPU compute-only driver (tinygrad/Tiny Corp, 2026) targets Apple Silicon + Thunderbolt 4; Intel Mac and Hackintosh paths are unverified. Don't count on it.
+- **AMD eGPU is the supported path for display + Metal.** RX 580 (Polaris), Vega 56/64, RX 5700 XT (Navi). Apple's drivers are native, Metal works, no driver hacks needed. Apple's official eGPU support list (until 2018) was AMD-only, and MBP16,2 was sold as eGPU-capable.
+- **NVIDIA over USB4/TBT for COMPUTE only** is now public via tinygrad's TinyGPU project (tbgpu driver). See subsection below.
+
+### NVIDIA-via-TinyGPU prospects (untested on this Spin 5)
+
+As of October 2025 ([Tom's Hardware coverage](https://www.tomshardware.com/pc-components/gpus/tiny-corp-successfully-runs-an-nvidia-gpu-on-arm-macbook-through-usb4-using-an-external-gpu-docking-station)), tinygrad / Tiny Corp shipped a public install path for NVIDIA RTX 30/40/50 series compute on macOS via USB4. **Compute only — no display, no Metal, no games.** Useful for LLM inference and ML training workloads via the tinygrad framework.
+
+#### Documented working configuration (Apple Silicon + USB4)
+
+- **Mac:** ARM-based MacBook (M-series); Intel Mac path is **not documented** by upstream
+- **Dock:** ADT-UT3G USB4-to-PCIe enclosure
+- **GPU:** any NVIDIA RTX 30/40/50 series (Ampere+; Pascal/Turing not supported)
+- **Setup steps:**
+  ```bash
+  # Disable SIP (Hackintoshes already run with relaxed SIP, so this is a non-issue here)
+  # Install tbgpu driver from tinygrad's repo
+  extra/usbgpu/tbgpu
+  # Install NVK compiler shim
+  brew install tinymesa
+  # Smoke test
+  DEBUG=2 NV_NAK=1 NV=1 python3 test/test_tiny.py TestTiny.test_plus
+  ```
+
+#### Unverified blockers for the SP513-54N specifically
+
+| Concern | Status | Notes |
+|---|---|---|
+| TBT3 (this hardware) vs USB4 (upstream tested) | ❓ | Same physical PCIe x4 tunnel, different protocol negotiation. ADT-UT3G *should* renegotiate down to TBT3 mode; not guaranteed. |
+| Intel Mac DriverKit vs Apple Silicon DriverKit | ❓ | tbgpu may carry ARM64-only entitlements or symbol dependencies. Untested by upstream. |
+| Hackintosh-specific entitlement validation | ❓ | DriverKit on a non-genuine SMBIOS may bind partially or refuse outright. No public reports either way. |
+| TBT3 host stack with real device | 🧪 | Type4 NHI initializes (verified), but no device has actually enumerated through it on this Hackintosh yet. |
+
+Compounded probability of full success on this exact machine with no upstream certification: **estimated ~10%**. The investment for a hardware test (~$200 ADT-UT3G + ~$300 RTX 3060 minimum = ~$500) is poor risk:reward at that probability.
+
+#### Recommended test sequence (cheap → expensive)
+
+Don't blind-buy hardware. Walk the cost ladder:
+
+1. **Free:** check upstream tinygrad GitHub issues + egpu.io periodically for any "Intel Mac" / "Hackintosh" / "TBT3 host" / "ADT-UT3G" reports. If even one person succeeds, the recipe becomes worth following.
+2. **~$80:** borrow or buy a used TBT3 SSD (e.g. Samsung X5). Plug into either USB-C port and run the verification commands in [Live verification](#live-verification-run-any-time-on-macos). If a TBT3 SSD doesn't enumerate → the host stack doesn't actually work in practice; no point spending more.
+3. **~$200:** TBT3 dock or hub (CalDigit TS3 Plus etc.). Confirms higher-bandwidth scenarios and DP-tunneled-display works.
+4. **Free if accessible:** if you can borrow time on an Apple Silicon Mac, run the TinyGPU test there first as a sanity check that the upstream recipe works at all.
+5. **~$500:** only after 1–4 succeed and you have community reports of Intel-Mac-or-Hackintosh success, attempt the ADT-UT3G + RTX 3060 setup on the Spin 5. Treat it as a research project, not a productivity investment.
+
+#### Alternative: dual-boot Linux
+
+If GPU compute is genuinely needed today (not as a research project), Linux is the dramatically simpler path:
+- Native NVIDIA driver + CUDA on the Spin 5's TBT3 ports, well-documented
+- Hours of setup vs weeks of debugging
+- Battle-tested by thousands of users
+- The Spin 5's TBT3 hardware is the same on Linux; only macOS's stricter driver gating creates the Hackintosh blockers
+
+Reserving the Hackintosh for daily macOS use and keeping a Linux partition for occasional GPU compute is the realistic split for this hardware.
 
 ### What still might break TBT in practice
 

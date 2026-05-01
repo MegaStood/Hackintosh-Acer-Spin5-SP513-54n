@@ -29,6 +29,7 @@ This guide documents a complete installation including **every problem encounter
   - [Problem 7: Bluetooth Firmware Not Loading](#problem-7-bluetooth-firmware-not-loading--v0-c0)
 - [USB Port Map](#usb-port-map-verified-2026-05-01)
 - [Thunderbolt 3 Status & Test Plan](#thunderbolt-3-status--test-plan)
+- [Display: PWM Flicker & Mitigation](#display-pwm-flicker--mitigation)
 - [Credits](#credits)
 
 ## Hardware
@@ -869,6 +870,90 @@ After your first successful TBT device enumeration:
 - Flip the status row in [What Works](#what-works) from 🧪 to ✅ (or a granular set: `✅ cold-plug, ⚠️ hot-plug, ❌ sleep/wake` etc.)
 - Add a "Tested TBT devices" subsection listing what worked
 - If you go down the eGPU path, document the GPU model, enclosure, boot-args (`-wegnoegpu` etc.), and any IOReg evidence
+
+## Display: PWM Flicker & Mitigation
+
+### The hardware problem
+
+The SP513-54N's IPS panel (13.5", 2256×1504, 3:2) uses **PWM backlight dimming at 196 Hz** for every brightness level **below 100%**. PWM eliminates entirely only when the brightness slider is at maximum.
+
+196 Hz is in the eye-strain zone — high enough that you don't *consciously* see flicker, low enough that PWM-sensitive eyes register it as fatigue, headache, or "tired eyes" after extended sessions. Roughly 10–20% of users are sensitive; the rest never notice.
+
+For reference:
+- Apple MacBook Pro (Mini-LED): true DC dimming, **no PWM**
+- Dell XPS 13 (recent): ~2300 Hz PWM (imperceptible to most)
+- ThinkPad X1 Carbon Gen 9+: DC dimming
+- **Acer Spin 5 SP513-54N: 196 Hz** ← bottom of the spec sheet
+
+This is a cost-engineering choice — DC dimming requires more sophisticated backlight driver circuitry, so OEMs in this price tier ship low-frequency PWM panels. It's not unique to Acer, but the SP513-54N's panel is on the worse end of the range.
+
+### Important: a color profile cannot actually eliminate PWM
+
+PWM is a hardware behavior of the LED backlight controller — pulsing the LED on/off to dim. Software (ICC profiles, Night Shift, f.lux, gamma adjustments) can only manipulate the *image data sent to the panel*, not how the LED is driven.
+
+Every "anti-PWM software solution" is really a **PWM-avoidance** workaround: keep the brightness at 100% (where PWM is off on this panel), then reduce *perceived* intensity through color/gamma manipulation (warmer color temperature, lower white point, reduced blue channel).
+
+### macOS solutions, ranked
+
+#### 1. Free / built-in: 100% brightness + Night Shift
+
+The cheapest path. Works out of the box on macOS Sonoma 14.x.
+
+1. **System Settings → Displays:** drag brightness slider all the way to the right (100%). **Uncheck "Automatically adjust brightness"** — otherwise the ambient sensor will dim the panel and re-engage PWM.
+2. **System Settings → Displays → Night Shift…:**
+   - Schedule: **Custom, 00:00 to 23:59** (always on)
+   - Color Temperature slider: start at **¼ from the right** for mild warmth; nudge warmer if your eyes still feel strained
+3. (Optional) Drag Night Shift into the menu bar via System Settings → Control Center → Display → "Show in Menu Bar" for fast toggling.
+
+This combo keeps the backlight at 100% (no PWM) while reducing perceived intensity via warm shift. Costs nothing.
+
+#### 2. Free / third-party: f.lux
+
+If Night Shift's max warmth (~2700K) isn't strong enough, [f.lux](https://justgetflux.com/) lets you go down to ~1900K (candle/ember). Much more aggressive perceived dimming, still at 100% backlight.
+
+- Disable Night Shift before using f.lux (don't double-warm)
+- f.lux auto-transitions on a curve based on local sunset/sunrise; set "Daytime", "Sunset", "Bedtime" temperatures independently
+
+#### 3. Paid: LaptopMedia Health-Guard ICC profile
+
+LaptopMedia sells a panel-calibrated `.icc` profile (~$10) tuned for this exact panel. ICC profiles are cross-platform — install via:
+
+```
+~/Library/ColorSync/Profiles/
+```
+
+…then assign in System Settings → Displays → Color Profile. Same end-effect as the free path, but with retained color accuracy (better for photo/design work). For general productivity, the free path is fine.
+
+#### 4. Hardware: panel replacement
+
+The original panel can be physically swapped. If you're going down this route, look for:
+- 13.5" 2256×1504 IPS, 3:2 aspect ratio
+- eDP connector matching the original (40-pin standard for this generation)
+- DC dimming or high-frequency PWM (>2400 Hz) in the spec sheet
+
+> **TODO:** document successful replacement panels here once tested. Owner's notes (panel model, eDP pinout match, brightness curve, color gamut, where bought) would be welcomed contribution.
+
+#### 5. External monitor
+
+If you're docked at a desk most of the time, a flicker-free external display via USB-C or (once we test) Thunderbolt 3 sidesteps the panel entirely. See [Thunderbolt 3 Status & Test Plan](#thunderbolt-3-status--test-plan).
+
+### Settings to verify
+
+```
+System Settings → Displays:
+  ☑ Brightness slider: 100% (rightmost)
+  ☐ Automatically adjust brightness   ← MUST be unchecked
+  ☑ Night Shift → Schedule: Custom, full day, ¼ slider warmth
+```
+
+### Quick troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Eyes feel tired after long sessions | PWM at <100% brightness | Verify brightness is at 100%, not ~99% |
+| Display dims by itself in dark rooms | Auto-brightness re-enabled | Recheck the auto-adjust box; macOS sometimes flips it after updates |
+| Night Shift not warm enough | Apple's max is ~2700K | Switch to f.lux for sub-2000K range |
+| Color-critical work suffers from warmth | Night Shift / f.lux distorts color | Use LaptopMedia Health-Guard ICC instead |
 
 ## Known ACPI Warnings (Benign)
 

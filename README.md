@@ -30,6 +30,7 @@ This guide documents a complete installation including **every problem encounter
 - [USB Port Map](#usb-port-map-verified-2026-05-01)
 - [Thunderbolt 3 Status & Test Plan](#thunderbolt-3-status--test-plan)
 - [Display: PWM Flicker & Mitigation](#display-pwm-flicker--mitigation)
+- [Sleep & Hibernate — Test Plan](#sleep--hibernate--test-plan-untested)
 - [Credits](#credits)
 
 ## Hardware
@@ -73,7 +74,7 @@ This guide documents a complete installation including **every problem encounter
 | Feature | Status | Notes |
 |---|---|---|
 | Thunderbolt 3 Protocol | 🧪 | **Stack initializes correctly but not yet tested with real TB3 hardware.** Both Ice Lake iTBT controllers (PCI `0x8a17` and `0x8a0d`) are claimed by `AppleThunderboltNHIType4`; full Type4 stack (HAL → NHI → Controller → LocalNode → Port) is up and waiting for devices. The MacBookPro16,2 SMBIOS spoof matches the real Apple Ice Lake TB3 platform exactly, so Apple's drivers configure themselves correctly. See [Thunderbolt 3 Status & Test Plan](#thunderbolt-3-status--test-plan). |
-| Sleep/Wake | ❓ | Not fully tested. SSDTs for sleep are included (GPRW, PTSWAKTTS, NameS3-disable) |
+| Sleep/Wake | ❌ | **Verified non-functional 2026-05-02.** Lid close → display off, but kernel never initiates sleep transition (zero `Sleep`/`Hibernate` events in `pmset -g log`; fan stays running indefinitely). Lid sensor works, all standard S3-enable SSDTs are loaded. Suspected cause: iGPU power-blocker boot-args + `DiscardHibernateMap=false`. See [Sleep & Hibernate — Test Plan](#sleep--hibernate--test-plan-untested). |
 | Fingerprint Reader | ❌ | macOS has no driver for ELAN 0x04f3:0x0c4f. Visible as a generic USB device on USBMap label `HS05` (controller port 6); not usable as Touch ID. (`SSDT-ShutFPReaderDown.aml` was archived to `ACPI/_bak/` — see note below.) |
 | SD Card Reader | ❓ | Controller not visible on PCIe at idle (no card inserted). May surface on insert as USB or PCIe; verify with `system_profiler SPCardReaderDataType` after inserting a card |
 
@@ -1111,6 +1112,132 @@ The PassMark and Cinebench rows are looser comparisons (PassMark is aggregate-by
 | Display dims by itself in dark rooms | Auto-brightness re-enabled | Recheck the auto-adjust box; macOS sometimes flips it after updates |
 | Night Shift not warm enough | Apple's max is ~2700K | Switch to f.lux for sub-2000K range |
 | Color-critical work suffers from warmth | Night Shift / f.lux distorts color | Use LaptopMedia Health-Guard ICC instead |
+
+## Sleep & Hibernate — Test Plan (UNTESTED)
+
+> **Status (2026-05-02):** Sleep and hibernate do not work on this config. This section documents a test plan for fixing them, derived by comparing the working setup of [jlempen/Surface-Laptop-3-OpenCore](https://github.com/jlempen/Surface-Laptop-3-OpenCore) (same SMBIOS, same Ice Lake era — hibernate confirmed working there). **Not yet tested on this machine.**
+
+### Symptom
+
+- Lid close → display turns off → fan keeps running indefinitely (verified at 25+ minutes)
+- `pmset -g log` shows `Display is turned off` followed by `darkwakelinger` timeout, then nothing — no `Sleep`, `Wake`, or `Hibernate` events ever
+- `Sleep/Wakes since boot :0` — kernel reports zero completed sleep cycles
+- `/var/vm/sleepimage` mtime never updates after lid-close events
+
+### What we ruled out
+
+| Hypothesis | Result | Evidence |
+|---|---|---|
+| `hibernatemode` not set | Ruled out | `pmset -g` shows `hibernatemode = 25` |
+| Lid sensor / ACPI lid event broken | Ruled out | `ioreg -k AppleClamshellState` flips `No`→`Yes` cleanly on lid close |
+| `AppleClamshellCausesSleep` disabled | Ruled out | shows `Yes` |
+| Missing S3-enable SSDT | Ruled out | `SSDT-NameS3-disable.aml` is loaded and decodes to `Method (_S3_) { Return (XS3_) }` with `XS3_=One` |
+| Sleep blocked by `caffeinate` assertion | Ruled out for lid-close path | `PreventUserIdleSystemSleep` only blocks idle sleep, not forced lid-close sleep |
+| `TCPKeepAlive` / `PowerNap` holding wake | Ruled out | All disabled (`pmset -a tcpkeepalive 0 powernap 0`); same failure mode |
+| Wake-source loop (instant-wake) | Ruled out | Log shows no wake events between lid-close and lid-open — kernel never even *enters* sleep |
+
+### Diagnosis
+
+The kernel's sleep dispatcher is **not initiating any sleep transition** after `darkwakelinger` expires. The infrastructure is correct (lid event arrives, S3 advertised, `hibernatemode 25` set) — but the dispatcher gives up silently. This is consistent with a PCI device (the iGPU) refusing to quiesce because boot-args explicitly forbid its low-power states.
+
+### Comparison with jlempen's working config (same MBP16,2 SMBIOS)
+
+| Setting | jlempen (works) | this repo (broken) |
+|---|---|---|
+| `boot-args` | `debug=0x100 keepsyms=1 revpatch=sbvmm -ibtcompatbeta -amfipassbeta` | adds `darkwake=0`, `-noDC9`, `forceRenderStandby=0`, `igfxonln=1`, plus BTLFX trio + `agdpmod=vit9696` + `alcid=13` |
+| `Booter > Quirks > DiscardHibernateMap` | `true` | `false` |
+| `HibernationFixup.kext` | present | present (same) |
+| ACPI sleep SSDTs | fewer (no AOAC S3, no PTSWAKTTS) | more (we have additional ones) |
+| Kernel Quirks (sleep-relevant) | identical | identical |
+
+The two material differences are the iGPU/`darkwake` boot-args and `DiscardHibernateMap`.
+
+### Why the iGPU args block sleep
+
+| Boot-arg | What it does | Sleep impact |
+|---|---|---|
+| `-noDC9` | Disables iGPU DC9 (display-core deepest off-state) | Display engine never powers down → blocks platform sleep |
+| `forceRenderStandby=0` | Disables RC6 (render units idle/clock-gate) | iGPU render block stays clocked → blocks deep idle |
+| `igfxonln=1` | Forces framebuffer "always online" | Display engine refuses to enter low-power |
+| `darkwake=0` | Disables dark wake (wake-side flag) | On some Ice Lake stacks, paradoxically interferes with sleep entry |
+
+These were originally added to fix display issues (black screen on wake, panel reattach quirks). Removing them may fix sleep but reintroduce display bugs — hence the need for one-at-a-time testing.
+
+### CURRENT WORKING BOOT-ARGS (DO NOT LOSE — fallback baseline)
+
+If any change below breaks the system, **revert to this exact string** in `EFI/OC/config.plist` → `NVRAM > Add > 7C436110-AB2A-4BBB-A880-FE41995C9F82 > boot-args`:
+
+```
+keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod=vit9696 darkwake=0 igfxonln=1 -noDC9 forceRenderStandby=0 alcid=13 -v -no_compat_check
+```
+
+This config has been verified stable for: BT, Wi-Fi, audio (alcid=13), iGPU framebuffer, display panel, AppleACPILid, USB. Sleep is the only known-broken thing.
+
+### Test plan
+
+**Step 0 — Backup.**
+
+```sh
+cp /Volumes/EFI/EFI/OC/config.plist /Volumes/EFI/EFI/OC/config.plist.bak-pre-hibernate
+```
+
+Also keep a copy of this README's *CURRENT WORKING BOOT-ARGS* block above.
+
+**Step 1 — Flip `DiscardHibernateMap` to `true` (zero-risk).**
+
+In `config.plist` → `Booter > Quirks > DiscardHibernateMap`, change `<false/>` to `<true/>`. Reboot. Test hibernate via lid-close. Expected: probably still doesn't work alone, but is a prerequisite.
+
+Verify: `pmset -g log | tail -20` should show a `Sleep` or `Hibernate` event after lid close. `/var/vm/sleepimage` mtime should update. Fan should stop within 30-60 sec of lid close.
+
+**Step 2 — Drop `darkwake=0` from boot-args (zero display side-effects).**
+
+Edit boot-args, remove just `darkwake=0`. Save, reboot, retest. If hibernate works → done. If not → continue.
+
+**Step 3 — Drop `-noDC9` (small risk: black screen on wake).**
+
+Remove `-noDC9`. Reboot, retest. If display issues appear on wake, restore it and try Step 4 instead.
+
+**Step 4 — Drop `forceRenderStandby=0` (small risk: GPU clock issues).**
+
+Remove `forceRenderStandby=0`. Reboot, retest.
+
+**Step 5 — Drop `igfxonln=1` (highest risk: display detach issues, last resort).**
+
+Remove `igfxonln=1`. Reboot, retest.
+
+**Step 6 — Optional forward-compat additions (independent of hibernate fix).**
+
+If hibernate is now working and you want to match jlempen's Sequoia/Tahoe-ready setup, add: `revpatch=sbvmm -ibtcompatbeta -amfipassbeta`. These don't affect hibernate but smooth future macOS upgrades.
+
+### Target boot-args (post-fix, jlempen-style)
+
+If all four iGPU/`darkwake` flags can be removed without regressions:
+
+```
+keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod=vit9696 alcid=13 -v -no_compat_check revpatch=sbvmm -ibtcompatbeta -amfipassbeta
+```
+
+Note: the three `-btlfx*` flags **must stay** — they are load-bearing for AX201 BT-on-USB on T2 SMBIOS. See [Boot Arguments](#boot-arguments) note.
+
+### Rollback
+
+If anything breaks at any step:
+
+1. Boot to recovery / installer USB
+2. Mount EFI: `sudo diskutil mount diskNsM`
+3. Replace `config.plist` with `config.plist.bak-pre-hibernate`
+4. Or just paste the *CURRENT WORKING BOOT-ARGS* string back into the existing config and flip `DiscardHibernateMap` back to `false`
+
+### Pass criteria
+
+Hibernate is considered working when **all** of these are true:
+
+- `pmset -g log` shows `Hibernate` event after lid close, with no immediate `Wake from Hibernate`
+- Fan spins down and stops within 60 sec of lid close
+- `/var/vm/sleepimage` mtime updates to match the sleep time
+- Power LED behavior matches expected S4 (fully off, not breathing)
+- Resume from power button takes ~10-15 sec to login screen, with cold-boot-style progress bar
+- `pmset -g log | grep "Sleep/Wakes since boot"` counter increments above zero
 
 ## Known ACPI Warnings (Benign)
 

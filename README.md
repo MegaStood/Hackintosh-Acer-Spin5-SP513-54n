@@ -30,7 +30,8 @@ This guide documents a complete installation including **every problem encounter
 - [USB Port Map](#usb-port-map-verified-2026-05-01)
 - [Thunderbolt 3 Status & Test Plan](#thunderbolt-3-status--test-plan)
 - [Display: PWM Flicker & Mitigation](#display-pwm-flicker--mitigation)
-- [Sleep & Hibernate — Test Plan](#sleep--hibernate--test-plan-untested)
+- [Sleep & Hibernate — Resolved](#sleep--hibernate--resolved-2026-05-03)
+- [BIOS Boot Entry Loss & Emulated NVRAM](#bios-boot-entry-loss--emulated-nvram-2026-05-03)
 - [Credits](#credits)
 
 ## Hardware
@@ -74,7 +75,8 @@ This guide documents a complete installation including **every problem encounter
 | Feature | Status | Notes |
 |---|---|---|
 | Thunderbolt 3 Protocol | 🧪 | **Stack initializes correctly but not yet tested with real TB3 hardware.** Both Ice Lake iTBT controllers (PCI `0x8a17` and `0x8a0d`) are claimed by `AppleThunderboltNHIType4`; full Type4 stack (HAL → NHI → Controller → LocalNode → Port) is up and waiting for devices. The MacBookPro16,2 SMBIOS spoof matches the real Apple Ice Lake TB3 platform exactly, so Apple's drivers configure themselves correctly. See [Thunderbolt 3 Status & Test Plan](#thunderbolt-3-status--test-plan). |
-| Sleep/Wake | ❌ | **Verified non-functional 2026-05-02.** Lid close → display off, but kernel never initiates sleep transition (zero `Sleep`/`Hibernate` events in `pmset -g log`; fan stays running indefinitely). Lid sensor works, all standard S3-enable SSDTs are loaded. Suspected cause: iGPU power-blocker boot-args + `DiscardHibernateMap=false`. See [Sleep & Hibernate — Test Plan](#sleep--hibernate--test-plan-untested). |
+| Hibernate (mode 25) | ✅ | **Working as of 2026-05-03.** Pure-S4 hibernate (write sleepimage → cold power off → cold POST resume). Triggered by lid close or `pmset sleepnow`. Resume time ~10–15 sec. See [Sleep & Hibernate — Resolved](#sleep--hibernate--resolved-2026-05-03). |
+| S3 sleep | ❌ | **Structurally broken on Ice Lake firmware** (i7-1065G7 ships with traditional S3 disabled in favor of S0ix Modern Standby; macOS doesn't speak S0ix). Symptom: `Failure during sleep: 0x002A001F : EFI/Bootrom Failure` — kernel hands off to firmware, firmware never completes the transition, system stays partially powered with fans on. Same constraint documented on jlempen's Surface Laptop 3. **Use hibernate mode 25 instead — it skips S3 entirely.** |
 | Fingerprint Reader | ❌ | macOS has no driver for ELAN 0x04f3:0x0c4f. Visible as a generic USB device on USBMap label `HS05` (controller port 6); not usable as Touch ID. (`SSDT-ShutFPReaderDown.aml` was archived to `ACPI/_bak/` — see note below.) |
 | SD Card Reader | ❓ | Controller not visible on PCIe at idle (no card inserted). May surface on insert as USB or PCIe; verify with `system_profiler SPCardReaderDataType` after inserting a card |
 
@@ -152,7 +154,7 @@ Also set `WriteFlash = true` to ensure NVRAM changes persist to firmware flash.
 ### Boot Arguments
 
 ```
-keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod=vit9696 darkwake=0 igfxonln=1 -noDC9 forceRenderStandby=0 alcid=13 -v -no_compat_check
+keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod=vit9696 igfxonln=1 alcid=13 -v -no_compat_check
 ```
 
 | Argument | Purpose |
@@ -163,13 +165,12 @@ keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod
 | `-btlfxboardid` | BlueToolFixup: bypass board-id check that routes T2-era SMBIOS to UART transport |
 | `-btlfxnvramcheck` | BlueToolFixup: skip the NVRAM `bluetoothInternalControllerInfo` precondition |
 | `agdpmod=vit9696` | Disable Apple GPU Display Policy board-id check |
-| `darkwake=0` | Disable dark wake (prevents partial-wake issues) |
 | `igfxonln=1` | Force all display connectors online (WhateverGreen) |
-| `-noDC9` | Disable DC9 power state (prevents Ice Lake sleep issues) |
-| `forceRenderStandby=0` | Disable render standby (prevents iGPU power issues) |
 | `alcid=13` | AppleALC layout ID for audio codec |
 | `-v` | Verbose boot (remove once stable) |
 | `-no_compat_check` | Skip PlatformSupport.plist board-id validation |
+
+**Removed 2026-05-03 (no longer needed under hibernate mode 25):** `darkwake=0`, `-noDC9`, `forceRenderStandby=0`. These were originally added to stabilize S3 wake on Ice Lake, but S3 is structurally broken on this firmware regardless (see [Sleep & Hibernate](#sleep--hibernate--resolved-2026-05-03)). Hibernate-25 fully powers the SoC off, so the iGPU power-state flags become no-ops.
 
 **Note on the three `-btlfx*` flags:** All three are required together on T2-era SMBIOS (e.g., MacBookPro16,2). With only `-btlfxallowanyaddr`, `bluetoothd` still selects UART transport because the board-id and NVRAM checks veto USB. Adding `-btlfxboardid` and `-btlfxnvramcheck` flips bluetoothd to the USB transport path, which is what the OpenIntelWireless stack actually provides for AX201.
 
@@ -1113,131 +1114,261 @@ The PassMark and Cinebench rows are looser comparisons (PassMark is aggregate-by
 | Night Shift not warm enough | Apple's max is ~2700K | Switch to f.lux for sub-2000K range |
 | Color-critical work suffers from warmth | Night Shift / f.lux distorts color | Use LaptopMedia Health-Guard ICC instead |
 
-## Sleep & Hibernate — Test Plan (UNTESTED)
+## Sleep & Hibernate — Resolved 2026-05-03
 
-> **Status (2026-05-02):** Sleep and hibernate do not work on this config. This section documents a test plan for fixing them, derived by comparing the working setup of [jlempen/Surface-Laptop-3-OpenCore](https://github.com/jlempen/Surface-Laptop-3-OpenCore) (same SMBIOS, same Ice Lake era — hibernate confirmed working there). **Not yet tested on this machine.**
+> **Status (2026-05-03):** Hibernate (mode 25) works. S3 sleep does not — and structurally cannot — work on Ice Lake firmware. This section documents the working config, the surgery required, and the dead-end paths to avoid.
 
-### Symptom
+### Two-day debug summary
 
-- Lid close → display turns off → fan keeps running indefinitely (verified at 25+ minutes)
-- `pmset -g log` shows `Display is turned off` followed by `darkwakelinger` timeout, then nothing — no `Sleep`, `Wake`, or `Hibernate` events ever
-- `Sleep/Wakes since boot :0` — kernel reports zero completed sleep cycles
-- `/var/vm/sleepimage` mtime never updates after lid-close events
+The investigation crossed two days (2026-05-02 → 2026-05-03), and the diagnosis evolved significantly. Recording what we tried in case it helps anyone debugging similar Ice Lake hardware.
 
-### What we ruled out
+**Day 1 (2026-05-02):**
+- Initial symptom: lid close → display off, fan keeps running, no sleep transition
+- First hypothesis (incorrect): iGPU power-blocker boot-args (`darkwake=0`, `-noDC9`, `forceRenderStandby=0`) were preventing dispatch
+- Tried removing them one at a time → no effect on sleep counter (`:0` never incremented)
+- Cross-referenced [jlempen/Surface-Laptop-3-OpenCore](https://github.com/jlempen/Surface-Laptop-3-OpenCore) (same MBP16,2 SMBIOS, same Ice Lake era) and Samsung NP900X5T (Kaby Lake, working S3) configs
+- DSDT analysis showed `SS3,One` (S3 advertised by firmware) and no `_TTS` method
+- Found that `_S3 → XS3` ACPI rename **plus** `SSDT-NameS3-disable.aml` were deliberately hiding `_S3_` from macOS — disabling those was required for the sleep dispatcher to engage at all
+- After disabling those, hibernate (mode 25) worked successfully — first `Sleep/Wakes since boot :2` of the project's life, with `HibernateStats hibmode=25 rd=95 ms` and `sleepimage` growing from 1.0 GB to 1.2 GB
+- Late evening: tested S3 sleep (`hibernatemode=0`) — failed three times with `Failure during sleep: 0x002A001F : EFI/Bootrom Failure`. Force shutdowns each time
+- Discovered: after a successful hibernate cycle, the next cold boot found **all UEFI Boot#### entries wiped from BIOS NVRAM** (Windows, ubuntu, OpenCore) — leaving only the UEFI fallback path
 
-| Hypothesis | Result | Evidence |
-|---|---|---|
-| `hibernatemode` not set | Ruled out | `pmset -g` shows `hibernatemode = 25` |
-| Lid sensor / ACPI lid event broken | Ruled out | `ioreg -k AppleClamshellState` flips `No`→`Yes` cleanly on lid close |
-| `AppleClamshellCausesSleep` disabled | Ruled out | shows `Yes` |
-| Missing S3-enable SSDT | Ruled out | `SSDT-NameS3-disable.aml` is loaded and decodes to `Method (_S3_) { Return (XS3_) }` with `XS3_=One` |
-| Sleep blocked by `caffeinate` assertion | Ruled out for lid-close path | `PreventUserIdleSystemSleep` only blocks idle sleep, not forced lid-close sleep |
-| `TCPKeepAlive` / `PowerNap` holding wake | Ruled out | All disabled (`pmset -a tcpkeepalive 0 powernap 0`); same failure mode |
-| Wake-source loop (instant-wake) | Ruled out | Log shows no wake events between lid-close and lid-open — kernel never even *enters* sleep |
+**Day 2 (2026-05-03):**
+- Diagnosed BIOS entry loss: Insyde firmware NVRAM exhaustion triggered by hibernate's `boot-image` writes + APFS bless writing `Boot0082` on every macOS boot. See [Emulated NVRAM section](#bios-boot-entry-loss--emulated-nvram-2026-05-03).
+- Diagnosed S3 sleep failure as a **firmware-level hard limitation**: Intel i7-1065G7 ships with traditional S3 disabled in favor of S0ix Modern Standby; macOS doesn't speak Modern Standby; firmware refuses S3 transitions. Same root cause documented on jlempen's Surface Laptop 3 (also Ice Lake). Not fixable in OpenCore.
+- Switched to emulated NVRAM via `OpenVariableRuntimeDxe.efi` to stop macOS-side NVRAM writes from triggering Insyde's pruning behavior
+- Resolved OpenCanopy "Failed to load image from Acidanthera/GoldenGate" by switching to text picker (`PickerMode = Builtin`) — the `EFI/OC/Resources/Image/` was empty (missing OcBinaryData icons)
 
-### Diagnosis
+### Final working configuration
 
-The kernel's sleep dispatcher is **not initiating any sleep transition** after `darkwakelinger` expires. The infrastructure is correct (lid event arrives, S3 advertised, `hibernatemode 25` set) — but the dispatcher gives up silently. This is consistent with a PCI device (the iGPU) refusing to quiesce because boot-args explicitly forbid its low-power states.
-
-### Comparison with jlempen's working config (same MBP16,2 SMBIOS)
-
-| Setting | jlempen (works) | this repo (broken) |
-|---|---|---|
-| `boot-args` | `debug=0x100 keepsyms=1 revpatch=sbvmm -ibtcompatbeta -amfipassbeta` | adds `darkwake=0`, `-noDC9`, `forceRenderStandby=0`, `igfxonln=1`, plus BTLFX trio + `agdpmod=vit9696` + `alcid=13` |
-| `Booter > Quirks > DiscardHibernateMap` | `true` | `false` |
-| `HibernationFixup.kext` | present | present (same) |
-| ACPI sleep SSDTs | fewer (no AOAC S3, no PTSWAKTTS) | more (we have additional ones) |
-| Kernel Quirks (sleep-relevant) | identical | identical |
-
-The two material differences are the iGPU/`darkwake` boot-args and `DiscardHibernateMap`.
-
-### Why the iGPU args block sleep
-
-| Boot-arg | What it does | Sleep impact |
-|---|---|---|
-| `-noDC9` | Disables iGPU DC9 (display-core deepest off-state) | Display engine never powers down → blocks platform sleep |
-| `forceRenderStandby=0` | Disables RC6 (render units idle/clock-gate) | iGPU render block stays clocked → blocks deep idle |
-| `igfxonln=1` | Forces framebuffer "always online" | Display engine refuses to enter low-power |
-| `darkwake=0` | Disables dark wake (wake-side flag) | On some Ice Lake stacks, paradoxically interferes with sleep entry |
-
-These were originally added to fix display issues (black screen on wake, panel reattach quirks). Removing them may fix sleep but reintroduce display bugs — hence the need for one-at-a-time testing.
-
-### CURRENT WORKING BOOT-ARGS (DO NOT LOSE — fallback baseline)
-
-If any change below breaks the system, **revert to this exact string** in `EFI/OC/config.plist` → `NVRAM > Add > 7C436110-AB2A-4BBB-A880-FE41995C9F82 > boot-args`:
-
-```
-keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod=vit9696 darkwake=0 igfxonln=1 -noDC9 forceRenderStandby=0 alcid=13 -v -no_compat_check
-```
-
-This config has been verified stable for: BT, Wi-Fi, audio (alcid=13), iGPU framebuffer, display panel, AppleACPILid, USB. Sleep is the only known-broken thing.
-
-### Test plan
-
-**Step 0 — Backup.**
+#### Pmset
 
 ```sh
-cp /Volumes/EFI/EFI/OC/config.plist /Volumes/EFI/EFI/OC/config.plist.bak-pre-hibernate
+pmset -g | grep -E "hibernatemode|standbydelay|tcpkeepalive|powernap"
+# expect:
+# hibernatemode 25
+# standbydelaylow 0
+# standbydelayhigh 0
+# tcpkeepalive 0
+# powernap 0
 ```
 
-Also keep a copy of this README's *CURRENT WORKING BOOT-ARGS* block above.
-
-**Step 1 — Flip `DiscardHibernateMap` to `true` (zero-risk).**
-
-In `config.plist` → `Booter > Quirks > DiscardHibernateMap`, change `<false/>` to `<true/>`. Reboot. Test hibernate via lid-close. Expected: probably still doesn't work alone, but is a prerequisite.
-
-Verify: `pmset -g log | tail -20` should show a `Sleep` or `Hibernate` event after lid close. `/var/vm/sleepimage` mtime should update. Fan should stop within 30-60 sec of lid close.
-
-**Step 2 — Drop `darkwake=0` from boot-args (zero display side-effects).**
-
-Edit boot-args, remove just `darkwake=0`. Save, reboot, retest. If hibernate works → done. If not → continue.
-
-**Step 3 — Drop `-noDC9` (small risk: black screen on wake).**
-
-Remove `-noDC9`. Reboot, retest. If display issues appear on wake, restore it and try Step 4 instead.
-
-**Step 4 — Drop `forceRenderStandby=0` (small risk: GPU clock issues).**
-
-Remove `forceRenderStandby=0`. Reboot, retest.
-
-**Step 5 — Drop `igfxonln=1` (highest risk: display detach issues, last resort).**
-
-Remove `igfxonln=1`. Reboot, retest.
-
-**Step 6 — Optional forward-compat additions (independent of hibernate fix).**
-
-If hibernate is now working and you want to match jlempen's Sequoia/Tahoe-ready setup, add: `revpatch=sbvmm -ibtcompatbeta -amfipassbeta`. These don't affect hibernate but smooth future macOS upgrades.
-
-### Target boot-args (post-fix, jlempen-style)
-
-If all four iGPU/`darkwake` flags can be removed without regressions:
+#### Boot-args
 
 ```
-keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod=vit9696 alcid=13 -v -no_compat_check revpatch=sbvmm -ibtcompatbeta -amfipassbeta
+keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod=vit9696 igfxonln=1 alcid=13 -v -no_compat_check
 ```
 
-Note: the three `-btlfx*` flags **must stay** — they are load-bearing for AX201 BT-on-USB on T2 SMBIOS. See [Boot Arguments](#boot-arguments) note.
+The three `darkwake=0`, `-noDC9`, `forceRenderStandby=0` flags from earlier configs were dropped — they target S3/S0ix wake reliability, which is moot when the SoC fully powers off via hibernate.
 
-### Rollback
+#### config.plist key settings
 
-If anything breaks at any step:
+| Path | Value | Purpose |
+|---|---|---|
+| `Misc:Boot:HibernateMode` | `NVRAM` | Hibernate state stored in NVRAM (now emulated, see below) |
+| `Misc:Boot:HibernateSkipsPicker` | `true` | Skip OC picker on hibernate-resume for faster wake |
+| `Misc:Boot:PickerMode` | `Builtin` | Text picker — bypasses OpenCanopy GoldenGate icon issue |
+| `Misc:Boot:LauncherOption` | `Disabled` | Don't write OC entry to firmware NVRAM (avoids Insyde wipe trigger) |
+| `Booter:Quirks:DiscardHibernateMap` | `true` | Required for clean hibernate map on resume |
+| `UEFI:Drivers` | `OpenVariableRuntimeDxe.efi` (LoadEarly=true) | Emulated NVRAM — see Emulated NVRAM section |
 
-1. Boot to recovery / installer USB
-2. Mount EFI: `sudo diskutil mount diskNsM`
-3. Replace `config.plist` with `config.plist.bak-pre-hibernate`
-4. Or just paste the *CURRENT WORKING BOOT-ARGS* string back into the existing config and flip `DiscardHibernateMap` back to `false`
+#### Required ACPI surgery
+
+The original config had `_S3 → XS3` rename + `SSDT-NameS3-disable.aml` together hiding `_S3_` from macOS. Both must be **disabled** for the sleep dispatcher to engage:
+
+| ACPI item | Original state | Required state | Why |
+|---|---|---|---|
+| `_S3 → XS3` rename | enabled | **disabled** | Was preventing macOS from seeing `_S3_` method |
+| `SSDT-NameS3-disable.aml` | enabled | **disabled** | Defines `_S3_` only for non-Darwin path, hiding it from macOS |
+| `_PTS → ZPTS` rename | enabled | **keep enabled** | Paired with iGPU SSDT — load-bearing for wake |
+| `_WAK → ZWAK` rename | enabled | **keep enabled** | Paired with iGPU SSDT — load-bearing for wake |
+| `SSDT-PTSWAKTTS-iGPU.aml` | enabled | **keep enabled** | iGPU power-state hooks for sleep/wake |
+| `GPRW → XPRW` rename | enabled | keep enabled | Standard wake-source fix |
+| `SSDT-GPRW.aml` | enabled | keep enabled | Pairs with GPRW rename |
+
+**Critical:** disabling the `_PTS/_WAK` renames or the iGPU SSDT alongside the `_S3` items causes wake to fail with `Failure during sleep: 0x002A001F : EFI/Bootrom Failure` and a black screen with roaring fans. The iGPU power-hooks are required even though hibernate is the active sleep mode.
+
+### Why S3 is structurally broken on Ice Lake (don't try to fix it)
+
+When testing `pmset hibernatemode 0` on this hardware, every attempt failed identically:
+
+```
+hibmode=0 standbydelaylow=0 standbydelayhigh=0
+Failure during sleep: 0x002A001F : EFI/Bootrom Failure after last point of entry to sleep
+```
+
+Decoded: `0x002A001F` is `kIOPMSleepStatusEFIBootromFailure`. The kernel hands off to firmware to enter deep sleep, firmware never completes the transition, CPU keeps running, displays go DPMS-off, fans keep running, watchdog forces shutdown after ~4 minutes.
+
+This is the textbook Ice Lake Modern Standby symptom. Intel i7-1065G7 firmware ships with traditional S3 disabled in favor of S0ix (Modern Standby / Connected Standby). The `_S3` ACPI object exists in the DSDT (we confirmed `SS3,One`), but the actual firmware S3 transition path is non-functional. macOS doesn't speak Modern Standby, so the handoff just hangs.
+
+**Hibernate (mode 25) works because it skips the broken firmware path entirely:** kernel writes sleepimage to disk → kernel powers off the system via ACPI shutdown (which Ice Lake firmware *does* support, unlike S3) → cold POST → boot.efi resumes from sleepimage. No firmware S3 dance required.
+
+The same constraint is documented on Surface Laptop 3 (also Ice Lake) in [jlempen's repo](https://github.com/jlempen/Surface-Laptop-3-OpenCore).
+
+### How to test hibernate
+
+```sh
+# Trigger
+pmset sleepnow
+# OR close the lid
+
+# Verify it was a real hibernate cycle (after wake)
+pmset -g log | grep -E "Hibernate|Wake from" | tail -10
+# expect: HibernateStats hibmode=25 rd=N ms
+
+ls -la /var/vm/sleepimage
+# expect: mtime updated, size ~1+ GB (compressed RAM dump)
+
+pmset -g | grep "Sleep/Wakes since boot"
+# expect: counter incremented
+```
 
 ### Pass criteria
 
 Hibernate is considered working when **all** of these are true:
 
-- `pmset -g log` shows `Hibernate` event after lid close, with no immediate `Wake from Hibernate`
-- Fan spins down and stops within 60 sec of lid close
-- `/var/vm/sleepimage` mtime updates to match the sleep time
-- Power LED behavior matches expected S4 (fully off, not breathing)
-- Resume from power button takes ~10-15 sec to login screen, with cold-boot-style progress bar
-- `pmset -g log | grep "Sleep/Wakes since boot"` counter increments above zero
+- `pmset sleepnow` or lid close → fans stop within 30 sec, power LED extinguishes (full S4 power-off, not breathing)
+- Power-button resume takes ~10–15 sec to login screen with cold-boot-style progress bar
+- `pmset -g log` shows `HibernateStats hibmode=25` after wake
+- `Sleep/Wakes since boot :N` counter increments
+- `/var/vm/sleepimage` mtime updates to the sleep time
+- BIOS Boot#### entries (Windows, ubuntu, OC) survive the cycle (requires emulated NVRAM — see next section)
+
+### Rollback
+
+If hibernate breaks after a config change:
+
+1. Mount EFI from recovery / installer USB
+2. Replace `config.plist` with `config-pre-legacyschema.plist.bak` (or any earlier backup)
+3. If unbootable, the `EFI/BOOT/BOOTx64.efi` fallback always works — F12 → SSD picks it up
+
+## BIOS Boot Entry Loss & Emulated NVRAM (2026-05-03)
+
+### Symptom
+
+After a successful hibernate cycle, the next cold boot finds **all UEFI `Boot####` entries wiped** from BIOS NVRAM — Windows, ubuntu, OpenCore stub all gone. F12 boot menu shows only the disk(s) directly. macOS still boots via the UEFI fallback path (`\EFI\BOOT\BOOTx64.efi`), but Windows and Linux cannot be selected.
+
+### Diagnosis: Insyde NVRAM exhaustion
+
+Comparing OpenCore logs across consecutive boots showed `BootOrder` repeatedly going from "populated" to `not present or unsupported 0 0`. The wipes correlated with hibernate cycles, not user actions or `CleanNvram.efi` runs (verified — `CleanNvram.efi` preserves `Boot####` by default).
+
+Acer's Insyde firmware has limited NVRAM space (~64 KB) and reclaims it poorly. When the variable region fills up, Insyde sometimes wipes whole categories of variables (including `Boot####` and `BootOrder`) instead of reclaiming individual stale entries. The triggers on this Hackintosh:
+
+1. **`HibernateMode = NVRAM`** — every hibernate writes the `boot-image` variable (~1 KB device-path blob) to firmware NVRAM
+2. **APFS bless** — every macOS boot, `boot.efi` re-blesses the preboot volume, writing `Boot0082` (~300 bytes) to firmware NVRAM
+3. **Other macOS NVRAM writes** — Apple ID tokens, audio volume state, `bluetoothInternalControllerInfo`, etc.
+
+Combined frequency was enough to trigger Insyde's pruning every few cycles.
+
+### Solution: emulated NVRAM via OpenVariableRuntimeDxe
+
+OpenCore's `OpenVariableRuntimeDxe.efi` redirects all UEFI variable I/O to a file on the ESP (`/Volumes/ESP/NVRAM/NVRAM.plist`) instead of firmware NVRAM. macOS-side writes never reach firmware. Once existing firmware Boot#### entries are recreated, they stay put.
+
+### Required components
+
+| Component | Location | Notes |
+|---|---|---|
+| `OpenVariableRuntimeDxe.efi` | `/Volumes/ESP/EFI/OC/Drivers/` | From OpenCorePkg release zip — must match your OC version |
+| `UEFI:Drivers` entry | `config.plist` | `Enabled=true`, `LoadEarly=true`, `Path=OpenVariableRuntimeDxe.efi`. **Must come before `OpenRuntime.efi` in array** so it loads first. |
+| `/NVRAM/` directory | ESP root | Empty — driver creates `NVRAM.plist` on first flush |
+| `NVRAM:LegacySchema` | `config.plist` | Whitelist of variables to persist. **An empty schema means nothing gets saved.** This was the gotcha that took two boot cycles to diagnose. |
+
+### LegacySchema content
+
+The whitelist must include all GUIDs whose variables you want persisted. Standard set for this Hackintosh:
+
+```xml
+<key>LegacySchema</key>
+<dict>
+    <key>7C436110-AB2A-4BBB-A880-FE41995C9F82</key>  <!-- Apple Boot -->
+    <array>
+        <string>boot-args</string>
+        <string>csr-active-config</string>
+        <string>fmm-mobileme-token-FMM</string>
+        <string>nvda_drv</string>
+        <string>prev-lang:kbd</string>
+        <string>run-efi-updater</string>
+        <string>SystemAudioVolume</string>
+        <string>SystemAudioVolumeDB</string>
+        <string>SystemAudioVolumeSaved</string>
+        <string>bluetoothActiveControllerInfo</string>     <!-- AX201 BT, T2 SMBIOS specific -->
+        <string>bluetoothInternalControllerInfo</string>   <!-- AX201 BT, T2 SMBIOS specific -->
+    </array>
+    <key>4D1EDE05-38C7-4A6A-9CC6-4BCCA8B38C14</key>  <!-- Apple GUI -->
+    <array>
+        <string>UIScale</string>
+        <string>DefaultBackgroundColor</string>
+    </array>
+    <key>4D1FDA02-38C7-4A6A-9CC6-4BCCA8B30102</key>  <!-- Apple Bootloader -->
+    <array>
+        <string>boot-image</string>      <!-- HIBERNATE STATE — required for hibernate-resume -->
+        <string>boot-image-key</string>
+        <string>boot-signature</string>
+    </array>
+    <key>8BE4DF61-93CA-11D2-AA0D-00E098032B8C</key>  <!-- UEFI Global -->
+    <array>
+        <string>BootNext</string>
+        <string>BootOrder</string>
+        <string>Boot0080</string>
+        <string>Boot0081</string>
+        <string>Boot0082</string>
+        <string>Boot0083</string>
+    </array>
+</dict>
+```
+
+WiFi state is not in NVRAM (it's in `/Library/Preferences/SystemConfiguration/`), so no WiFi-specific keys need to be added. Bluetooth IS in NVRAM and the two BT-related keys are required for AX201 on T2-spoofed SMBIOS.
+
+### Recreating Boot#### entries (one-time)
+
+After emulated NVRAM is active, recreate the firmware Boot#### entries that Insyde lost. From a Linux live USB:
+
+```sh
+# Identify ESP partition
+sudo lsblk -o NAME,PARTTYPENAME,MOUNTPOINT
+
+# Add OpenCore entry (replace nvme0n1 / partition number with yours)
+sudo efibootmgr -c -d /dev/nvme0n1 -p 1 \
+  -L "OpenCore" -l '\EFI\OC\OpenCore.efi'
+
+# Add Windows entry (Windows partition is usually shared ESP partition 1)
+sudo efibootmgr -c -d /dev/nvme0n1 -p 1 \
+  -L "Windows Boot Manager" -l '\EFI\Microsoft\Boot\bootmgfw.efi'
+
+# Add ubuntu entry (path varies — check /boot/efi/EFI/ubuntu/)
+sudo efibootmgr -c -d /dev/nvme0n1 -p 1 \
+  -L "ubuntu" -l '\EFI\ubuntu\shimx64.efi'
+```
+
+Or use BIOS Setup → Boot → "Add Boot Option" / "Boot from File" and point each entry at the correct EFI executable.
+
+These entries are written **once** to firmware NVRAM. With emulated NVRAM active, macOS writes go to the file, so firmware NVRAM stays untouched and the entries persist.
+
+### Verification
+
+After reboot with emulated NVRAM enabled:
+
+```sh
+# Check NVRAM.plist exists (created on first clean shutdown after enable)
+ls -la /Volumes/ESP/NVRAM/NVRAM.plist
+
+# Check OC log for emulated load success
+grep -aE "OCVAR|OpenVariable" /Volumes/ESP/opencore-*.txt | tail -5
+# Look for: "OCVAR: Loading NVRAM from storage... Success"
+# (First boot may show "Emulated NVRAM load failed - Not Found" → "Restoring FW NVRAM..." which is OK; file gets created on shutdown)
+```
+
+### Rollback
+
+`AllowNvramReset` and `CleanNvram.efi` both operate on the active store — with emulation active, they wipe only `NVRAM.plist`, never firmware NVRAM. So they're safe to use as recovery tools.
+
+If the emulated store gets corrupted: delete `NVRAM.plist`, reboot. OC seeds a fresh one from `NVRAM:Add` config and re-imports any firmware values still present.
+
+If you want to fully revert to firmware NVRAM: disable `OpenVariableRuntimeDxe.efi` in `UEFI:Drivers`. macOS will go back to writing firmware NVRAM directly — and the Insyde wipe behavior will eventually return.
+
+### Time-zone note for OpenCore log files
+
+OpenCore log filenames (`opencore-YYYY-MM-DD-HHMMSS.txt`) and their FAT32 mtimes are stored in **UTC** because EFI's `GetTime()` returns the hardware RTC and this Hackintosh runs RTC=UTC (Apple convention). When viewing in `ls -la` on a Seoul timezone system, OpenCore-written timestamps appear ~9 hours behind real wall-clock; macOS-userspace-written files (e.g., the `/NVRAM/` directory created via Terminal) appear in local time. This is normal and not a configuration issue.
 
 ## Known ACPI Warnings (Benign)
 

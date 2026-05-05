@@ -1179,10 +1179,6 @@
 				<data>
 				AQAAAA==
 				</data>
-				<key>enable-cfl-backlight-fix</key>
-				<data>
-				AQAAAA==
-				</data>
 				<key>enable-dbuf-early-optimizer</key>
 				<data>
 				AQAAAA==
@@ -1194,6 +1190,66 @@
 				<key>enable-hdmi20</key>
 				<data>
 				AQAAAA==
+				</data>
+				<key>framebuffer-con1-busid</key>
+				<data>
+				AQAAAA==
+				</data>
+				<key>framebuffer-con1-enable</key>
+				<data>
+				AQAAAA==
+				</data>
+				<key>framebuffer-con1-flags</key>
+				<data>
+				hwEAAA==
+				</data>
+				<key>framebuffer-con1-pipe</key>
+				<data>
+				EgAAAA==
+				</data>
+				<key>framebuffer-con1-type</key>
+				<data>
+				AAQAAA==
+				</data>
+				<key>framebuffer-con2-busid</key>
+				<data>
+				AgAAAA==
+				</data>
+				<key>framebuffer-con2-enable</key>
+				<data>
+				AQAAAA==
+				</data>
+				<key>framebuffer-con2-flags</key>
+				<data>
+				hwEAAA==
+				</data>
+				<key>framebuffer-con2-pipe</key>
+				<data>
+				CQAAAA==
+				</data>
+				<key>framebuffer-con2-type</key>
+				<data>
+				AAQAAA==
+				</data>
+				<key>framebuffer-con3-busid</key>
+				<data>
+				AwAAAA==
+				</data>
+				<key>framebuffer-con3-enable</key>
+				<data>
+				AQAAAA==
+				</data>
+				<key>framebuffer-con3-flags</key>
+				<data>
+				hwEAAA==
+				</data>
+				<key>framebuffer-con3-pipe</key>
+				<data>
+				CgAAAA==
+				</data>
+				<key>framebuffer-con3-type</key>
+				<data>
+				AAQAAA==
 				</data>
 				<key>framebuffer-fbmem</key>
 				<data>

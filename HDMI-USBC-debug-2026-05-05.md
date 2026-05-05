@@ -348,6 +348,74 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
     - Decompiled DSDT.aml + SSDT-5.aml.
     - Found `_DOD` method uses runtime-populated `DIDL/DDL2…DDL15` fields → static dump can't give mapping.
     - Pivot: Linux is the right tool for this question.
+7. Linux i915 + VBT diagnostic (Ubuntu 24.04 LTS, kernel 6.17.0-22-generic):
+    - DRM card index is `card1` on this kernel, not `card0` (early commands had to be re-run with the right index).
+    - Definitive port → DDI map captured (full output in commit 5029ee0):
+        - `eDP-1` → DDI A / PHY A → busid `0x00` (internal panel)
+        - `HDMI-A-1` → DDI B / PHY B → busid `0x01` (built-in HDMI port)
+        - `DP-1` → DDI C (TC) / PHY TC1 → busid `0x02` (**REAR** USB-C — counterintuitively TC1 = rear, not front)
+        - `DP-2` → DDI D (TC) / PHY TC2 → busid `0x03` (**FRONT** USB-C)
+    - VBT (`intel_vbt_decode`) confirms: `Onboard LSPCON: no` for ALL outputs. HDMI port is wired DDI B → connector directly with native HDMI 1.4 TMDS capability. No DP→HDMI conversion chip.
+    - Linux successfully drives all four outputs (eDP at 2256x1504@60, HDMI/DP-1/DP-2 at 1920x1080@60) — hardware is fully functional. macOS-side bottleneck is descriptor-mismatch + Apple display policy, not silicon.
+    - S3 suspend/resume on Linux: works cleanly. Confirms macOS S3-wake issue is driver-side, not hardware.
+
+8. **Commit `5029ee0`** authored Linux-side: VBT-derived `framebuffer-conN-*` overrides for con1/con2/con3, dropped `enable-cfl-backlight-fix`. Brought ESP `config.plist` into line for testing.
+9. **First DDI events ever fired in macOS!** With VBT-derived overrides applied:
+    - Plugged USB-C hub (Genesys Logic + HDMI display) into FRONT USB-C → kernel log:
+        ```
+        Hotplug detected on ddi = 3            ← FRONT USB-C, busid=3 — MAPPING IS CORRECT
+        HPD is high. Setting port mode
+        ddi 3 isHPDLow=0 emptyDongle=0 ...      ← real sink detected
+        Event insert                            ← attachment recognized
+        ```
+    - But Apple's framebuffer driver then explicitly rejects the port:
+        ```
+        [IGFB][ERROR][HOT_PLUG] Unsupported port type 10
+        [IGFB][INFO ][HOT_PLUG] ddi 3 ... portMode = 3
+        [IGFB][ERROR][HOT_PLUG] Non-managed external displays are no longer supported
+        ```
+    - **Significance:** the connector descriptor problem is solved (DDI events fire on the right DDI). The remaining issue is Apple-side display policy:
+        - **Port type 10** (`= 0x0A = bits 1+3 = "DP|HDMI capable"`): Apple's classification for a Type-C port that does both DP alt-mode AND HDMI conversion. `AppleIntelICLLPGraphicsFramebuffer` lacks a handler for this combination.
+        - **portMode = 3** is a new value (we'd only seen 1 before for DP) — likely "DP alt-mode through TC PHY".
+        - **"Non-managed external displays are no longer supported"** is a hardcoded message in modern macOS T2-class framebuffer code: external displays must pass AGDC/AGDP validation. Non-Apple-blessed attachments get rejected even when silicon would otherwise accept them.
+    - Spurious DDI 2 hotplug fired briefly (5 sec before the front plug landed) — driver classified it as `slave port of multi cable display` and dismissed. Cross-talk during PD-controller negotiation, not a real attachment.
+
+---
+
+## Test results matrix — `5029ee0` connector overrides
+
+| Path | Plug | DDI event? | Port type | Result |
+|---|---|---|---|---|
+| FRONT USB-C (con3, busid=3) | Genesys hub + HDMI display | ✓ `ddi = 3` HPD high | `Unsupported port type 10` | rejected — non-managed external |
+| REAR USB-C (con2, busid=2) | Not yet tested as primary plug | ✓ glitched once during front-plug transient | n/a | inconclusive — need dedicated test |
+| HDMI port (con1, busid=1) | Not yet tested under new config | n/a | n/a | not tested |
+| Internal eDP (con0, default) | always-on | n/a | n/a | ✓ working |
+
+The mapping is **proven correct** (DDI events fire on the expected DDI per Linux/VBT data). The remaining failure mode is **macOS Sonoma display-policy rejection**, not connector layout.
+
+---
+
+## Candidate next-step experiments (in approximate order of cost/value)
+
+1. **Switch `agdpmod=vit9696` → `agdpmod=pikera`** (single boot-arg edit, easy revert)
+    - `vit9696` patches AGDC's board-id check; `pikera` patches a different path (display-validation rather than board-id). Some Ice Lake Hackintoshes only work with one or the other.
+    - If this clears `Unsupported port type 10` and `Non-managed external displays are no longer supported` → success.
+
+2. **`agdpmod=ignore`** (single boot-arg edit, more aggressive)
+    - Disables AGDP validation entirely. May have side effects on display preferences/profiles.
+
+3. **Patch port-type rewrite via WhateverGreen patches**
+    - Look into WEG flags to remap "port type 10" → "port type 2" (DP) or 4 (HDMI) in the framebuffer init path.
+    - May require a WhateverGreen kernel patch or `framebuffer-portcount` override.
+
+4. **SMBIOS change (last resort)**
+    - From `MacBookPro16,2` → e.g. `MacBookAir9,1` or `iMac20,1`. Loosens AGDC policies.
+    - Major change with cascading implications: BT, audio, power management, App Store services. Avoid unless 1–3 fail.
+
+5. **HDMI port test under new config (con1, busid=1)**
+    - VBT confirms no LSPCON, native HDMI 1.4 TMDS. With `type=DP(0x400)` (current commit), DDI B will likely emit DP signaling that the HDMI display rejects → portMode=1, sinkCount=0 (the old failure mode).
+    - Worth testing once but expected to fail without a fundamental approach change.
+    - If we want it to actually work: try `type=HDMI(0x800)` for con1 specifically, accepting that WEG's HDMI conversion is documented broken on Ice Lake (acidanthera/bugtracker #1616) but worth empirical retest.
 
 ---
 

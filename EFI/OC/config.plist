@@ -160,6 +160,14 @@
 			</dict>
 			<dict>
 				<key>Comment</key>
+				<string>EXT4 hook (post-_WAK): Notify GFX0 on S3 wake, speculative iGPU re-eval</string>
+				<key>Enabled</key>
+				<true/>
+				<key>Path</key>
+				<string>SSDT-EXT4-iGPU-Wake.aml</string>
+			</dict>
+			<dict>
+				<key>Comment</key>
 				<string>Sleep Fix</string>
 				<key>Enabled</key>
 				<true/>

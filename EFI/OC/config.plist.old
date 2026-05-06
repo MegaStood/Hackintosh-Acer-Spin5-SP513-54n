@@ -170,7 +170,7 @@
 				<key>Comment</key>
 				<string>AOAC S3</string>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>Path</key>
 				<string>SSDT-NameS3-disable.aml</string>
 			</dict>
@@ -202,7 +202,7 @@
 				<key>Comment</key>
 				<string>Sleep/wake _PTS/_WAK/_TTS hook (pairs with renames)</string>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>Path</key>
 				<string>SSDT-PTSWAKTTS-iGPU.aml</string>
 			</dict>
@@ -384,7 +384,7 @@
 				<key>Count</key>
 				<integer>0</integer>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>Find</key>
 				<data>
 				X1BUUwE=
@@ -422,7 +422,7 @@
 				<key>Count</key>
 				<integer>0</integer>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>Find</key>
 				<data>
 				X1dBSwk=
@@ -536,7 +536,7 @@
 				<key>Count</key>
 				<integer>0</integer>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>Find</key>
 				<data>
 				X1MzXw==
@@ -1120,6 +1120,8 @@
 				<data>
 				cKEAAA==
 				</data>
+				<key>hda-gfx</key>
+				<string>onboard-1</string>
 				<key>layout-id</key>
 				<integer>56</integer>
 				<key>model</key>
@@ -1169,6 +1171,10 @@
 				<data>
 				AQAAAA==
 				</data>
+				<key>enable-cfl-backlight-fix</key>
+				<data>
+				AQAAAA==
+				</data>
 				<key>enable-dbuf-early-optimizer</key>
 				<data>
 				AQAAAA==
@@ -1193,7 +1199,19 @@
 				<data>
 				hwEAAA==
 				</data>
+				<key>framebuffer-con1-has-lspcon</key>
+				<data>
+				AQAAAA==
+				</data>
+				<key>framebuffer-con1-index</key>
+				<data>
+				AQAAAA==
+				</data>
 				<key>framebuffer-con1-pipe</key>
+				<data>
+				CQAAAA==
+				</data>
+				<key>framebuffer-con1-preferred-lspcon-mode</key>
 				<data>
 				AQAAAA==
 				</data>
@@ -1211,19 +1229,19 @@
 				</data>
 				<key>framebuffer-con2-flags</key>
 				<data>
-				gQIAAA==
+				hwEAAA==
 				</data>
 				<key>framebuffer-con2-pipe</key>
 				<data>
-				AQAAAA==
+				DQAAAA==
 				</data>
 				<key>framebuffer-con2-type</key>
 				<data>
-				AAQAAA==
+				AAgAAA==
 				</data>
 				<key>framebuffer-con3-busid</key>
 				<data>
-				AwAAAA==
+				BgAAAA==
 				</data>
 				<key>framebuffer-con3-enable</key>
 				<data>
@@ -1231,11 +1249,11 @@
 				</data>
 				<key>framebuffer-con3-flags</key>
 				<data>
-				gQIAAA==
+				AAAIAA==
 				</data>
 				<key>framebuffer-con3-pipe</key>
 				<data>
-				AQAAAA==
+				CgAAAA==
 				</data>
 				<key>framebuffer-con3-type</key>
 				<data>
@@ -1243,18 +1261,20 @@
 				</data>
 				<key>framebuffer-fbmem</key>
 				<data>
-				AAAwAQ==
+				AACQAA==
 				</data>
 				<key>framebuffer-patch-enable</key>
 				<integer>1</integer>
 				<key>framebuffer-stolenmem</key>
 				<data>
-				AABgAg==
+				AAAwAQ==
 				</data>
 				<key>framebuffer-unifiedmem</key>
 				<data>
 				AAAAgA==
 				</data>
+				<key>hda-gfx</key>
+				<string>onboard-1</string>
 				<key>igfxfw</key>
 				<data>
 				AgAAAA==
@@ -2461,7 +2481,7 @@
 			<key>7C436110-AB2A-4BBB-A880-FE41995C9F82</key>
 			<dict>
 				<key>boot-args</key>
-				<string>keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod=ignore alcid=13 -v -no_compat_check -igfxdbg -liludbgall igfxonln=1</string>
+				<string>keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod=vit9696 igfxonln=1 alcid=13 -v -no_compat_check -igfxdbg -liludbgall igfxlspcon=1</string>
 				<key>csr-active-config</key>
 				<data>
 				AAAAAA==
@@ -2536,14 +2556,14 @@
 			<key>AdviseFeatures</key>
 			<false/>
 			<key>MLB</key>
-			<string></string>
+			<string>C02113401GUP8PG8C</string>
 			<key>MaxBIOSVersion</key>
 			<false/>
 			<key>ProcessorType</key>
 			<integer>2309</integer>
 			<key>ROM</key>
 			<data>
-			AAAAAAAA
+			NoVYrLqi
 			</data>
 			<key>SpoofVendor</key>
 			<true/>
@@ -2552,9 +2572,9 @@
 			<key>SystemProductName</key>
 			<string>MacBookPro16,2</string>
 			<key>SystemSerialNumber</key>
-			<string></string>
+			<string>C02FHGZ2ML7H</string>
 			<key>SystemUUID</key>
-			<string>00000000-0000-0000-0000-000000000000</string>
+			<string>51D67DB5-674F-469F-BD27-A3750CCA73F6</string>
 		</dict>
 		<key>UpdateDataHub</key>
 		<true/>
@@ -2672,9 +2692,9 @@
 				<key>Comment</key>
 				<string>Emulated NVRAM</string>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>LoadEarly</key>
-				<true/>
+				<false/>
 				<key>Path</key>
 				<string>OpenVariableRuntimeDxe.efi</string>
 			</dict>
@@ -2686,7 +2706,7 @@
 				<key>Enabled</key>
 				<true/>
 				<key>LoadEarly</key>
-				<true/>
+				<false/>
 				<key>Path</key>
 				<string>OpenRuntime.efi</string>
 			</dict>

@@ -13,12 +13,18 @@ This document captures what was tried, what was learned, and the **next-step Lin
 
 ## TL;DR — current state
 
+> **★ FIX FOUND 2026-05-06 (entry #26): set `framebuffer-conN-pipe = <01000000>` (= 1) for external connectors.** The field labeled `pipe` in WhateverGreen's DeviceProperties is read by `AppleIntelICLLPGraphicsFramebuffer.kext` as the runtime port-type byte, NOT the scanout pipe enum (despite the label). ICL kext's allow-list accepts only `{0, 1}`. We had inherited CFL-era pipe values (`0x12, 0x09, 0x0A`) which the ICL kext rejected as `Unsupported port type 18/9/10`. Setting pipe=1 makes the connector accepted. **con3 (front USB-C) confirmed working with Dell P2722H attached. con1/con2 just modified, awaiting reboot.**
+
+### Original problem statement (preserved for context)
+
 - **Internal display**: working ✓
 - **HDMI port (Path A)**: when patched with `con1` overrides, DDI 1 hot-plugs on cable plug, but `portMode=1` (DP signaling on a port that goes to an HDMI-only sink) and `sinkCount=0` (no DDC response). Display stays black. Likely no LSPCON in this hardware.
 - **USB-C ports (Paths B/C)**: USB function works (mouse/Ethernet/SD-reader through hub all enumerate fine in macOS). DP alt-mode handshake to the iGPU **never engages** — zero `Hotplug detected on ddi` events, zero TBT topology change events.
-- **Root cause we're now investigating**: stock 8A52 framebuffer's connector descriptors (busids `0x02, 0x09, 0x0A, 0x0B, 0x0C` for the 5 DP slots) target the MacBook Pro 16,2 reference platform layout, which has 4× Type-C and 0× HDMI — wrong shape for our Acer (1× HDMI + 2× Type-C). Without correct `framebuffer-conN-busid` overrides, DP alt-mode events have nowhere to land in the framebuffer driver.
+- **Root cause we were investigating**: stock 8A52 framebuffer's connector descriptors (busids `0x02, 0x09, 0x0A, 0x0B, 0x0C` for the 5 DP slots) target the MacBook Pro 16,2 reference platform layout, which has 4× Type-C and 0× HDMI — wrong shape for our Acer (1× HDMI + 2× Type-C). Without correct `framebuffer-conN-busid` overrides, DP alt-mode events have nowhere to land in the framebuffer driver.
 
-We need the **physical port → DDI letter mapping** for this firmware to author correct connector overrides. That's what the Linux test plan below produces.
+We needed the **physical port → DDI letter mapping** for this firmware to author correct connector overrides. That's what the Linux test plan below produced.
+
+**Note: as of entry #26, we now know the busid fix was necessary but NOT sufficient — pipe values also needed to be in the ICL kext's allow-list `{0, 1}`. We had been carrying broken (CFL-era) pipe values the entire time without recognizing the field's true semantics. See entry #26 for the full discovery + fix recipe.**
 
 ---
 
@@ -644,6 +650,72 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
     - **Caveat for all:** even with a supported card, Hackintosh + eGPU on Sonoma is fragile. Requires correct AGDP config, sometimes specific kexts. eGPU drives ITS OWN displays — doesn't fix iGPU port-type rejection.
     - **For our debug context:** eGPU is a workaround path (separate display via eGPU outputs), not a fix for the iGPU. The TB3 dock path (entry #24) is more directly relevant because it lets the iGPU itself drive the display via DDI 4/5.
 
+26. **2026-05-06 — ★ THE FIX ★: `framebuffer-conN-pipe` IS the runtime portType byte. External display WORKING.**
+
+    **Discovery (credit: user pattern recognition).** While reviewing the runtime portType values reported by `[IGFB][LOG][DISPLAY] PortIndex = N, DDI = N, port type = X`, the user noticed that the reported `port type` X exactly matches the value we'd set in `framebuffer-conN-pipe`:
+
+    | Connector | `framebuffer-conN-pipe` (pre-fix) | Reported runtime `port type` |
+    |---|---|---|
+    | con1 (HDMI port) | `<12000000>` = 0x12 = **18** | **18** ✓ matches |
+    | con2 (rear USB-C) | `<09000000>` = 0x09 = **9** | **9** ✓ matches |
+    | con3 (front USB-C) | `<0A000000>` = 0x0A = **10** | **10** ✓ matches |
+
+    **Conclusion: WhateverGreen's documentation labels the field `framebuffer-conN-pipe`, but on `AppleIntelICLLPGraphicsFramebuffer.kext` the value at this byte position is read as the runtime port-type classification, not the scanout pipe enum.** The naming convention is inherited from older platforms (CFL/KBL) where the field had different semantics for that gen's framebuffer kext.
+
+    **The fix:** set `framebuffer-conN-pipe = 0x01` for accepted-by-the-whitelist port type. Tested on con3 (front USB-C) — **external display attached, IODisplayConnect appeared on FB@1 with full EDID for a Dell P2722H 27" monitor.** Zero `Invalid port type` errors in post-boot kernel log. Display visible and usable.
+
+    **Then extended:** changed con1 (HDMI port) and con2 (rear USB-C) pipe values from 0x12 / 0x09 to 0x01 as well. Awaiting reboot to verify.
+
+    **Cross-generation context (credit: user observation).** Different Intel iGPU generations have **different framebuffer kexts with different accepted port-type values**:
+
+    | Generation | Kext | Stock pipe values (port types) |
+    |---|---|---|
+    | Coffee Lake (CFL) | `AppleIntelCFLGraphicsFramebuffer` | **8, 9, 10, ...** (higher values; broader allow-list) |
+    | Ice Lake (ICL) | `AppleIntelICLLPGraphicsFramebuffer` | **0 (internal) and 1 (external) only** |
+    | Tiger Lake (TGL) | `AppleIntelTGLGraphicsFramebuffer` | (similar to ICL pattern, gen-specific) |
+
+    **Why this misled the entire Hackintosh community for ICL.** When Ice Lake hardware appeared (~2019, 10th-gen Intel), community members ported existing CFL config templates to ICL machines. The pipe values like 0x09, 0x0A, 0x12 got inherited without question — they "looked right" because the labels and structure matched. Internal display worked (pipe 0 was always present, accepted by all kexts). External display rejected with `Unsupported port type N` where N was the inherited CFL pipe value. Community concluded "ICL kext is hardcoded to reject non-Apple silicon paths" and chased fixes at the wrong level (kernel patches, agdpmod variants, AGDP rules) for years. **The fix was to set the field labeled "pipe" to a value the ICL kext's allow-list accepts (0 or 1).**
+
+    **Connection to jlempen's Surface Laptop 3 commit (entry #18 corrected).** The agent's web research and our diff verification of jlempen's commit `5b1b5f58` ("Fix external display through USB-C") concluded the only substantive change was `hda-gfx` removal. **That conclusion was wrong.** The actual cause of jlempen's working external display was that **their config had NO `framebuffer-conN-*` overrides at all** — slots 1-5 used stock 8A52 values, which include pipe values from {0, 1}, all accepted by ICL kext's allow-list. The `hda-gfx` removal was incidental. We can now retroactively verify this by checking jlempen's connector descriptors are stock (no pipe overrides).
+
+    **ICL pipe assignment design:**
+    - **Pipe 0** = Pipe A = internal eDP (every ICL Mac)
+    - **Pipe 1** = Pipe B = all external displays (TBT3-routed; software-arbitrated for multiple)
+    - **Pipe 2** = Pipe C = unused in stock Apple ICL configs (untested code path)
+
+    **Implications:**
+    - Pipe=2 (port type 2) is the only "valid pipe enum" we haven't tested. May or may not be in the kext's whitelist at other rejection sites. Risky to rely on.
+    - **All external connectors set to pipe=1 means mutual exclusion** — only one can drive a display at a time. For 2 simultaneous external displays, would need to test pipe=2 on one connector (lower confidence).
+
+    **Final config recipe for Spin 5 ICL Hackintosh external displays:**
+    ```
+    framebuffer-con1-busid = <01000000>     (DDI B - HDMI port wiring)
+    framebuffer-con1-enable = <01000000>
+    framebuffer-con1-flags  = <87010000>
+    framebuffer-con1-pipe   = <01000000>    ★ pipe=1 → port type 1 → accepted ★
+    framebuffer-con1-type   = <00040000>    (DP)
+
+    framebuffer-con2-busid = <02000000>     (DDI C - rear USB-C wiring)
+    framebuffer-con2-enable = <01000000>
+    framebuffer-con2-flags  = <81020000>
+    framebuffer-con2-pipe   = <01000000>    ★ pipe=1 → port type 1 → accepted ★
+    framebuffer-con2-type   = <00040000>    (DP)
+
+    framebuffer-con3-busid = <03000000>     (DDI D - front USB-C wiring)
+    framebuffer-con3-enable = <01000000>
+    framebuffer-con3-flags  = <81020000>
+    framebuffer-con3-pipe   = <01000000>    ★ pipe=1 → port type 1 → accepted ★
+    framebuffer-con3-type   = <00040000>    (DP)
+    ```
+
+    **What can be retracted from earlier conclusions:**
+    - Entry #18: jlempen's "fix" wasn't `hda-gfx` removal; it was absence of pipe overrides. Retroactively explained.
+    - Entries #11–22: chased numerous wrong fixes (LSPCON probe, agdpmod variants, connector flags 0x281, kext disassembly for binary patch, TB3 dock theory). All those rabbit holes can be deprecated.
+    - Entry #22 (kext skim) is still informative — confirmed the `{0, 1}` allow-list at one gate, which validates the fix mechanism. The proposed binary patch was correct in approach but unnecessary because the config-side fix exists.
+    - Entry #24 (DDI 4/5 = port type 1) is now also explained: stock 8A52 connector descriptors for slots 4-5 have pipe=1.
+
+    **Status:** con3 confirmed working (Dell P2722H attached). con1 and con2 just modified; awaiting reboot/test for HDMI port and rear USB-C.
+
 ---
 
 ## Test results matrix — `5029ee0` connector overrides (post-cleanup)
@@ -678,9 +750,11 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
 
 ---
 
-## Candidate next-step experiments (revised 2026-05-06, post-DDI-4/5-discovery)
+## Candidate next-step experiments (SUPERSEDED — fix found in entry #26)
 
-> **PRIMARY LEAD CHANGED:** Per entry #24, DDI 4/5 already report port type 1 (accepted by the kext's allow-list). A TB3 dock with DP/HDMI output is now the most promising fix path — no kext patches needed. See option (1) below.
+> **★ FIX FOUND (entry #26):** Set `framebuffer-conN-pipe = <01000000>` for external connectors. This field is the runtime portType byte (despite WhateverGreen's "pipe" label). Value 1 is in the ICL kext's allow-list. con3 confirmed working with this fix; con1 and con2 modified, awaiting reboot/test.
+
+> **All experiments below are deprecated** in light of the entry #26 finding. Kept for historical context. The TB3 dock path (was #1) is no longer needed since DDI 1/2/3 work directly with `pipe=1`.
 
 > **Status of prior candidates:**
 > - `agdpmod=vit9696 → pikera`: wrong fix (AMD dGPU only). Permanently removed.

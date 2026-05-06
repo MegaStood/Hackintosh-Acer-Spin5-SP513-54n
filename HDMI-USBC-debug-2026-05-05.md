@@ -13,7 +13,14 @@ This document captures what was tried, what was learned, and the **next-step Lin
 
 ## TL;DR — current state
 
-> **★ FIX FOUND 2026-05-06 (entry #26): set `framebuffer-conN-pipe = <01000000>` (= 1) for external connectors.** The field labeled `pipe` in WhateverGreen's DeviceProperties is read by `AppleIntelICLLPGraphicsFramebuffer.kext` as the runtime port-type byte, NOT the scanout pipe enum (despite the label). ICL kext's allow-list accepts only `{0, 1}`. We had inherited CFL-era pipe values (`0x12, 0x09, 0x0A`) which the ICL kext rejected as `Unsupported port type 18/9/10`. Setting pipe=1 makes the connector accepted. **con3 (front USB-C) confirmed working with Dell P2722H attached. con1/con2 just modified, awaiting reboot.**
+> **★ FIX FOUND 2026-05-06 (entry #26): set `framebuffer-conN-pipe = <01000000>` (= 1) for external connectors.** The field labeled `pipe` in WhateverGreen's DeviceProperties is read by `AppleIntelICLLPGraphicsFramebuffer.kext` as the runtime port-type byte, NOT the scanout pipe enum (despite the label). ICL kext's allow-list accepts only `{0, 1}`. We had inherited CFL-era pipe values (`0x12, 0x09, 0x0A`) which the ICL kext rejected as `Unsupported port type 18/9/10`. Setting pipe=1 makes the connector accepted.
+>
+> **Final verified state (entry #27):**
+> - **con2 (rear USB-C): ✓ WORKING** at pipe=1 — Dell P2722H attaches cleanly on FB@1
+> - **con3 (front USB-C): ✓ WORKING** at pipe=1 — Dell P2722H attaches cleanly on FB@1
+> - **con1 (HDMI port): allow-list passes but downstream signaling fails** — no LSPCON in Spin 5 hardware (VBT-confirmed), DP signaling can't drive HDMI display. Hardware limitation, not a software fix. See entry #27 for details.
+>
+> **2 of 3 external paths working. USB-C ports are the daily-driver path.**
 
 ### Original problem statement (preserved for context)
 
@@ -715,6 +722,50 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
     - Entry #24 (DDI 4/5 = port type 1) is now also explained: stock 8A52 connector descriptors for slots 4-5 have pipe=1.
 
     **Status:** con3 confirmed working (Dell P2722H attached). con1 and con2 just modified; awaiting reboot/test for HDMI port and rear USB-C.
+
+27. **2026-05-06 — Multi-connector verification under entry #26 fix.**
+
+    **con2 (rear USB-C, pipe=1): ✓ WORKING.** Hot-plug on DDI 2 produces:
+    ```
+    [HOT_PLUG] Hotplug detected on ddi = 2
+    [DISPLAY]  PortIndex = 2, DDI = 2, port type = 1     ← accepted
+    [HOT_PLUG] Fb1: Injecting HPD                          ← framebuffer engages
+    ```
+    Same Dell P2722H attaches on FB@1 with full EDID. Zero rejection events. Identical clean attachment as con3. **Two confirmed working external paths now: con2 and con3 (both USB-C).**
+
+    **con1 (HDMI port, pipe=1): allow-list passes, but downstream signaling fails.** Hot-plug on DDI 1 produces:
+    ```
+    [HOT_PLUG] Hotplug detected on ddi = 1                ← DDI 1 mapping works
+    [HOT_PLUG] HPD is high. Setting port mode
+    [HOT_PLUG] port->getDPCDParams()->SinkCount = 0       ← no DDC response
+    [HOT_PLUG] port->getPortState() = 0                   ← port unusable
+    (10 sec retry loop)
+    [HOT_PLUG] Setting DP power failed (0xe00002d6 = kIOReturnTimeout)
+    [HOT_PLUG] ddi 1 isHPDLow=0 emptyDongle=0 sinkCount=0 portMode=1
+    [HOT_PLUG] Returning as DPCD failed
+    ```
+
+    **No `Invalid port type` or `Unsupported port type` errors.** The pipe=1 fix successfully bypassed the port-type-allow-list rejection at this connector too — same as con2/con3. But the connection still fails downstream because:
+
+    - DDI B (combo PHY) is wired to the HDMI port's TMDS connector pins
+    - With `framebuffer-con1-type = DP (0x400)`, the framebuffer drives **DisplayPort signaling** on those wires
+    - The HDMI display can't decode DP signaling
+    - DPCD reads time out (HDMI displays don't have DPCD registers)
+    - Framebuffer concludes "sink went offline" and gives up
+
+    **This is the well-known DP-on-HDMI-wires failure mode predicted way back in entry #1.** The HDMI port works in firmware (DDI B is wired correctly, PHY can drive signals) but the *signaling protocol* mismatch needs hardware-level conversion (LSPCON) which the Spin 5 doesn't have (per VBT decode in entry #7).
+
+    **The pipe=1 fix is therefore complete in scope:** it bypasses the kext's port-type-allow-list rejection. But for HDMI port specifically, there's a downstream hardware limitation that no config edit can fix.
+
+    **Final practical state:**
+    - **con3 (front USB-C, pipe=1): ✓ working** — one of the daily-driver ports
+    - **con2 (rear USB-C, pipe=1): ✓ working** — the other daily-driver port
+    - **con1 (HDMI port, pipe=1): pass-through to signaling failure** — no LSPCON, can't drive native HDMI TMDS without DP→HDMI hardware
+    - **Internal eDP: ✓ unaffected** throughout the entire investigation
+
+    User has 2 of 3 external paths working — both USB-C ports interchangeable for a USB-C hub or USB-C-to-HDMI dongle. HDMI port is a hardware limitation, not solvable in software.
+
+    **Possible future test (optional, low priority):** `framebuffer-con1-type = HDMI (0x800)` to ask the framebuffer to drive native HDMI TMDS. WEG's HDMI conversion is documented broken on Ice Lake ([acidanthera/bugtracker #1616](https://github.com/acidanthera/bugtracker/issues/1616)), but worth one empirical test in 2026 with current WEG. Don't expect success.
 
 ---
 

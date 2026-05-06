@@ -538,6 +538,61 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
     - **DPCD log line clarification:** `[IGFB][LOG][DPCD] DWN_STRM_PORT0_CAP Type: 0X3` = downstream port type 0x3 = **HDMI** per DP spec (0=DP, 1=VGA, 2=DVI, 3=HDMI, 4=Other-no-EDID, 5=DP++/HDMI bridge). Informational, not an error. Confirms the cable IS detected and characterized as serving an HDMI sink. Rejection happens later in the kext's port-type-allow-list, not here.
     - **Conclusion:** `_DSM` 0x12 path is a confirmed dead-end for external-display debugging. Recorded here so we don't re-explore it later. The actual lever remains the framebuffer kext's port-type-allow-list (kernel-patch territory).
 
+21. **2026-05-06 — `-igfxtypec` test + connector flags `0x281` test (Option B, bundled).**
+    - Reverted `-igfxtypec` (it caused AUX timeouts on DDI 1 + pipe underruns + DBuf failures without changing portType classification).
+    - Changed `framebuffer-con2-flags` and `framebuffer-con3-flags` from `<87010000>` (0x187) to `<81020000>` (0x281) per "TC-PHY indicator bit 0x200" hypothesis.
+    - **Result post-reboot:** hot-plug on USB-C (DDI 3) still produces `[IGFB][ERROR][HOT_PLUG] Unsupported port type 10` + `[IGFB][ERROR][PORT] Invalid port type 10` polling. **No change in runtime `portType` classification.** Bit 0x200 hypothesis **falsified**.
+    - Side-effect observation: AUX errors at boot dropped from 1040 → 40 (26× reduction) — the flag change DID alter framebuffer probe behavior, just not on the port-type axis we hoped.
+    - Notable absence corrected: the `Non-managed external displays are no longer supported` message no longer fires under `agdpmod=ignore` (replaced by `AGDC managed display: Start listening to AGDC`). So `agdpmod=ignore` removed the AGDP-layer rejection — but the framebuffer-kext-layer rejection (port-type allow-list) remains.
+
+22. **2026-05-06 — Kext skim of `AppleIntelICLLPGraphicsFramebuffer` (sub-agent investigation).**
+    - **Goal:** find the port-type comparison instruction inside the framebuffer kext binary, with intent to author an OpenCore `Kernel > Patch` to add 10 and 18 to the accepted set.
+    - **Binary location:** kext is bundled inside `/System/Library/KernelCollections/SystemKernelExtensions.kc` (360 MB Mach-O fileset). On modern sealed-system macOS the standalone `.kext` bundle does not exist on disk. Fileset entry: vmaddr `0x14269000`, fileoff `338071552`, size ~856 KB.
+    - **ICLLP `__TEXT` sections:** `__text` at vma `0x14269880` (size `0x7e8f2`), `__cstring` at vma `0x142efac4` (size `0x1273d`).
+    - **No bitmap or table of accepted port types found** in `__const` or `__data`. **No standalone validator function** like `bool is_acceptable_port_type(int)`. Validation is **inlined at multiple call sites** (≥6 found).
+    - **Cleanest validation site at `0x14276300`:**
+        ```
+        0x142762fd:  mov eax, [rax+8]         ; load port type
+        0x14276300:  test eax, eax            ; ==0?  → accept (eDP)
+        0x14276302:  je   0x14276328
+        0x14276304:  cmp eax, 1               ; ==1?  → accept (DP via TBT3)
+        0x14276307:  je   0x14276363
+        0x14276309:  lea rdi, [rip+...]       ; "Unsupported port type" string
+        0x14276310:  lea rsi, [rip+...]
+        0x14276317:  xor eax, eax
+        0x14276319:  call _os_log_internal
+        0x1427631e:  mov eax, 0xe00002c7      ; kIOReturnUnsupported
+        0x14276323:  jmp  0x14276d97          ; ret error
+        ```
+    - **Whitelist of {0, 1} only.** Port types 10, 18, and everything else are rejected. This explains the rejection on every Hackintosh ICL config — the allow-list is hardcoded to Apple's stock SKU coverage.
+    - **Why 10 and 18 specifically?** They're Apple-internal classifications, NOT general DP/HDMI standard values. The kext computes runtime portType from PHY type (combo vs Type-C/DKL) + DDI letter + downstream connector capabilities + LSPCON presence:
+        - **Port type 0** = internal eDP (Apple has this on every Mac)
+        - **Port type 1** = DP via Apple's Thunderbolt 3 controller (Apple's stock USB-C path on every TBT3 Mac)
+        - **Port type 10** = direct DKL PHY DP-alt-mode without TBT3 routing (Spin 5's USB-C ports — hub does DP-alt-mode passthrough, no TBT3 in path)
+        - **Port type 18** = native HDMI on combo PHY (Spin 5's built-in HDMI port — Apple ICL Macs ship with no native HDMI)
+    - **The Spin 5's ports both fall into "non-Apple silicon paths"** that Apple's framebuffer doesn't have allow-list entries for. This is why no community config-side fix exists — Apple never has to handle these paths.
+    - **Proposed binary patch (single 9-byte patch, addresses one site):**
+
+        | Field | Value |
+        |---|---|
+        | `Identifier` | `com.apple.driver.AppleIntelICLLPGraphicsFramebuffer` |
+        | `MinKernel` | `23.0.0` |
+        | `MaxKernel` | `23.99.99` |
+        | `Find` | `85 C0 74 24 83 F8 01 74 5A` |
+        | `Replace` | `85 C0 74 24 90 90 90 EB 5A` |
+        | `Count` | `1` |
+        | Uniqueness | 9-byte sequence appears exactly once in the entire 360 MB kc |
+
+        Effect: original accepts only `{0, 1}`; patched accepts `{0, ANY non-zero}` by replacing `cmp eax, 1; je accept` with `nop; nop; nop; jmp accept`. Forces all non-zero port types onto the type-1 acceptance path.
+
+    - **Risks of applying this patch:**
+        1. **Forces port type 10/18 onto the type-1 code path.** Type-1 expects TBT3-routed DP signaling; port type 10 (direct DKL PHY) and 18 (combo PHY HDMI TMDS) need different downstream setup. Could lead to: silent display failure, partial init, or panic on subsequent state access.
+        2. **Only addresses ONE of 6+ rejection sites** found in the disassembly. After this patch, port type 10/18 may still get rejected at downstream sites (e.g., `0x14277b22`, `0x142ceb6a`, `0x142daec9`, `0x142dde76`) that gate on different conditions.
+        3. **No reasonable surgical patch exists** to whitelist exactly `{10, 18}` — would require a longer multi-instruction patch the agent couldn't safely identify.
+        4. **Boot risk**: if patched kext panics, system won't boot. Recovery requires external boot disk and ESP edit access.
+        5. **Reversibility**: patch is in `config.plist` Kernel > Patch — disabling/removing the entry restores original behavior.
+    - **Status:** patch identified, awaiting user approval to add to `Kernel > Patch` array in `config.plist`.
+
 ---
 
 ## Test results matrix — `5029ee0` connector overrides (post-cleanup)

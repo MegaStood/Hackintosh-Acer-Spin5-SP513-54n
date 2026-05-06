@@ -402,54 +402,108 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
     - `igfxonln=1` — important for external display detection (force-online connectors).
     - `-igfxdbg -liludbgall -v` — debug logging, keep until external display works.
 
-12. **2026-05-06 — LSPCON code-path test (pending reboot).**
+12. **2026-05-06 — LSPCON code-path test.**
     - Added single key `enable-lspcon-support = <01000000>` to iGPU DeviceProperties.
     - Did **not** add per-connector `has-lspcon-conN` (would force WEG to write LSPCON I²C registers to a chip that doesn't exist per VBT — bus-hang risk).
     - Did **not** add `preferred-lspcon-mode-conN` (only meaningful with `has-lspcon-conN=1`).
     - Did **not** add boot-arg `igfxlspcon=1` (equivalent of the DeviceProperty; setting both is redundant).
-    - Goal: probe whether engaging the WEG LSPCON code path globally (which then DPCD-probes each connector and silently fails when no LSPCON found) has any incidental effect on the `Unsupported port type 10` rejection at AGDC level. Honest expectation: **unlikely** to fix it (port-type rejection happens upstream of LSPCON code path), but cheap experiment with low risk.
+    - Goal: probe whether engaging the WEG LSPCON code path globally has any incidental effect on the `Unsupported port type 10` rejection.
     - Backup: `config-pre-lspcon-test.plist.bak`.
-    - **Status: edit applied to ESP, not yet rebooted to test.**
+    - **Result after reboot: confirmed inert / no-op.** Boot init clean, FB0/1/2 enumerate as before. Hot-replug on front USB-C still produces same `Unsupported port type 10` + `portMode=3` + `Non-managed external displays are no longer supported` rejection. **Zero `lspcon`/`LSPCON` log lines anywhere** — even at `-igfxdbg -liludbgall` verbosity. Empirical confirmation that WEG's LSPCON code path requires per-connector `has-lspcon-conN=1` to actually engage; the global flag alone is dormant. Property left in place (harmless) for now.
+
+13. **2026-05-06 — Path A test (built-in HDMI port, first time under VBT-derived overrides).**
+    - HDMI cable plugged directly into the laptop's built-in HDMI port (DDI B, busid=1, con1).
+    - Hot-plug log capture (`/tmp/replug-log.txt`):
+        ```
+        Hotplug detected on ddi = 1            ← MAPPING WORKS for HDMI port
+        HPD is high. Setting port mode
+        HPD is high
+        Unsupported port type 18               ← NEW VALUE (was 10 on USB-C)
+        ddi 1 isHPDLow=0 emptyDongle=0 sinkCount=0 sinkCountChanged=0 portMode=1
+        Event insert
+        AGDC Callback is not yet registered!!
+        Non-managed external displays are no longer supported
+        ```
+    - **DDI 1 mapping confirmed correct** — busid=1 → DDI B → built-in HDMI port. All three external paths (con1/2/3) now have validated DDI mapping.
+    - **`portMode = 1` + `sinkCount = 0`** matches the prior prediction for Path A: DDI B emits DP signaling (con1-type=DP, no LSPCON to convert), HDMI display can't decode → no DDC response → sinkCount=0.
+    - Same `Non-managed external displays are no longer supported` rejection as USB-C path, but at a **different runtime port-type bucket**: 18 (= 0x12) for HDMI port vs 10 (= 0x0A) for USB-C.
+
+14. **2026-05-06 — Synthesis of port-type rejection mechanism.**
+    - The two failure paths produce **different runtime `portType` values**:
+
+        | Path | DDI | static `framebuffer-conN-type` | runtime `portType` | `portMode` |
+        |---|---|---|---|---|
+        | HDMI port (con1) | DDI B (native) | `0x400` (DP) | **18** (= 0x12) | 1 (DP signaling) |
+        | USB-C front (con3) | DDI D (TC PHY) | `0x400` (DP) | **10** (= 0x0A) | 3 (DP-alt-mode through TC PHY) |
+        | USB-C rear (con2) | DDI C (TC PHY) | `0x400` (DP) | (10 expected) | (3 expected) |
+
+    - **Critical conclusion:** `framebuffer-conN-type` (static, set in DeviceProperties) ≠ runtime `portType` (set by framebuffer kext at hotplug). The static value is metadata for the connector descriptor; runtime port type is computed from link training / DPCD probe / silicon path. Editing `con1-type` to HDMI(0x800) would NOT change `Unsupported port type 18` to anything else.
+    - **The rejection happens INSIDE `AppleIntelICLLPGraphicsFramebuffer` at port-type-allow-list level**, before AGDC/AGDP gets involved. The `AGDC Callback is not yet registered!!` message in the log is a misleading red herring — the framebuffer logs it but auto-validates with `response=0x0`. Real blocker is the framebuffer kext's hardcoded set of "approved" port types.
+    - **Implication for next experiments:**
+        - `agdpmod=ignore` is now predicted to **not help** — rejection is at framebuffer level, not AGDP level. Still worth one test as it's cheap.
+        - Changing `framebuffer-conN-type` is predicted to **not help** — static type doesn't influence runtime classification.
+        - **WEG kernel patch** (binary patch the port-type compare instruction in `AppleIntelICLLPGraphicsFramebuffer::handleHotPlug` to add 10 and 18 to the accepted list) is now the most-targeted next move. Requires disassembling the kext to find the comparison.
+        - **SMBIOS change** is the second-most plausible — different SMBIOS may load a different framebuffer kext version with different port-type allow-lists.
 
 ---
 
-## Test results matrix — `5029ee0` connector overrides
+## Test results matrix — `5029ee0` connector overrides + LSPCON flag
 
-| Path | Plug | DDI event? | Port type | Result |
-|---|---|---|---|---|
-| FRONT USB-C (con3, busid=3) | Genesys hub + HDMI display | ✓ `ddi = 3` HPD high | `Unsupported port type 10` | rejected — non-managed external |
-| REAR USB-C (con2, busid=2) | Not yet tested as primary plug | ✓ glitched once during front-plug transient | n/a | inconclusive — need dedicated test |
-| HDMI port (con1, busid=1) | Not yet tested under new config | n/a | n/a | not tested |
-| Internal eDP (con0, default) | always-on | n/a | n/a | ✓ working |
+| Path | Plug | DDI event? | Static type | Runtime portType | portMode | sinkCount | Result |
+|---|---|---|---|---|---|---|---|
+| HDMI port (con1, busid=1) | direct HDMI cable to built-in port | ✓ `ddi = 1` HPD high | DP (0x400) | **18** (0x12) | 1 (DP signaling) | 0 | rejected — `Unsupported port type 18` + non-managed |
+| FRONT USB-C (con3, busid=3) | Genesys hub + HDMI display | ✓ `ddi = 3` HPD high | DP (0x400) | **10** (0x0A) | 3 (DP-alt-mode/TC) | 0 | rejected — `Unsupported port type 10` + non-managed |
+| REAR USB-C (con2, busid=2) | Not yet tested as primary plug | ✓ glitched once during front-plug transient | DP (0x400) | (10 expected) | (3 expected) | n/a | inconclusive — need dedicated test |
+| Internal eDP (con0, default) | always-on | n/a | LVDS (0x02) | LVDS | n/a | n/a | ✓ working |
 
-The mapping is **proven correct** (DDI events fire on the expected DDI per Linux/VBT data). The remaining failure mode is **macOS Sonoma display-policy rejection**, not connector layout.
+**Findings:**
+- All three external DDI mappings are **proven correct** (DDI events fire on the expected DDI per Linux/VBT data).
+- Two distinct runtime `portType` rejection buckets: `18` for native DDI (HDMI port), `10` for TC PHY (USB-C ports). Same downstream `Non-managed external displays are no longer supported` rejection in both.
+- Static `framebuffer-conN-type` does **not** influence runtime `portType`. Changing it won't help.
+- LSPCON code path **confirmed inert** with global `enable-lspcon-support=1` alone (no per-connector flags).
+- The rejection happens inside `AppleIntelICLLPGraphicsFramebuffer` at port-type-allow-list level, **upstream of AGDC**. The `AGDC Callback is not yet registered!!` in logs is a misleading harmless message.
 
 ---
 
-## Candidate next-step experiments (in approximate order of cost/value)
+## Candidate next-step experiments (revised 2026-05-06 after Path A test + LSPCON null result)
 
-> **Note 2026-05-06:** previous suggestion to swap `agdpmod=vit9696 → agdpmod=pikera` was **wrong** — `pikera` is for AMD Navi/Vega dGPU board-id mismatch (e.g. RX 5700 on iMac SMBIOS), not Intel iGPU port-type-10 rejection. Removed from this list.
+> **Notes:**
+> - Previous suggestion `agdpmod=vit9696 → agdpmod=pikera` was wrong — `pikera` is for AMD Navi/Vega dGPU board-id mismatch, not relevant for Intel iGPU. Permanently removed.
+> - LSPCON probe (entry #12) tested and **confirmed inert** without per-connector `has-lspcon-conN=1`. Property left in config (harmless) for now.
+> - Path A (HDMI port) tested (entry #13) — produces `Unsupported port type 18` + `portMode=1` + `sinkCount=0`. Not solved by any current config edit.
 
-1. **LSPCON code-path probe (in progress).** `enable-lspcon-support=1` added 2026-05-06; awaiting reboot to test. See session log entry #12 for rationale and risk assessment. Honest expectation: low probability of fixing port-type-10. If no effect → revert and try #2.
+1. **WhateverGreen kernel patch — port-type allow-list expansion** (most-targeted, requires deep work).
+    - Goal: patch `AppleIntelICLLPGraphicsFramebuffer::handleHotPlug` (or whichever method emits `Unsupported port type N`) to **accept** runtime `portType = 10` and `portType = 18`, OR to rewrite them to `portType = 2` (DP) at the comparison site.
+    - Steps:
+        1. Disassemble `/System/Library/Extensions/AppleIntelICLLPGraphicsFramebuffer.kext/Contents/MacOS/AppleIntelICLLPGraphicsFramebuffer` (binary `Mach-O 64-bit x86_64`).
+        2. Find the string "Unsupported port type" — locate its xref to identify the comparison instruction.
+        3. Identify the constant being compared (e.g. `cmp eax, 2` or `cmp eax, 4` for accepted values; or a switch table).
+        4. Author OpenCore `Kernel > Patch` entry: replace pattern with one that accepts `0x0A` and `0x12`.
+    - High effort (requires disassembly skill). Highest probability of being a real fix.
 
-2. **WhateverGreen port-type rewrite patches**
-    - Most-targeted attack on `Unsupported port type 10`. Possible mechanisms:
-        - WEG `framebuffer-conN-type` already set to DP(`0x00000400`) for all three external connectors — but the framebuffer's *internal* port-type after probe ends up reported as 10 (= 0x0A = DP+HDMI bits), suggesting WEG's static type override is being overridden by the framebuffer's runtime DP-alt-mode classifier.
-        - Possible workaround: kernel patch (binary patch in OC's `Kernel > Patch`) to rewrite the comparison constant `0x0A` → `0x02` in `AppleIntelICLLPGraphicsFramebuffer::handleHotPlug`. Requires identifying the comparison instruction.
-        - Alternatively: `force-online=1` per-connector (instead of via `igfxonln=1` boot-arg) plus aggressive `enable-*` flags from Surface profile, applied **one at a time**.
+2. **WhateverGreen high-level port-type rewrite via DeviceProperties** (lower effort, lower probability).
+    - Investigate WEG flags that affect runtime port-type classification:
+        - `force-online=1` per-connector (instead of via `igfxonln=1` boot-arg) — different code path.
+        - Surface-profile aggressive `enable-*` flags (`enable-dpcd-max-link-rate-fix`, `enable-max-pixel-clock-override`, `enable-hdmi-dividers-fix`, etc.) applied **one at a time** with single-variable testing.
+        - `disable-typec-framebuffer-unload` — if it exists in our WEG version.
+    - Risky given prior FB0 black-screen with bundled changes. Single-variable approach mandatory.
 
-3. **`agdpmod=ignore`** (single boot-arg edit, more aggressive than `vit9696`)
-    - Disables AGDP validation entirely, not just board-id check. May have side effects on display preferences/profiles/sleep wake.
-    - Worth trying as a quick experiment — if the rejection is at AGDP level (not framebuffer level), this would clear it.
+3. **SMBIOS change** (different framebuffer kext + AGDP rules).
+    - From `MacBookPro16,2` → e.g. `MacBookAir9,1` (closer match physically — Ice Lake ultraportable with internal panel + HDMI/USB-C externals). Different SMBIOS may load a different framebuffer kext version or have different port-type allow-lists.
+    - Cascading effects: BT (per memory: fixed via USBMap, probably safe), audio (alcid may need adjusting), power management, App Store services, sleep behavior, hibernate.
+    - Reasonable as a one-shot test if (1) and (2) fail or are too involved.
 
-4. **SMBIOS change (last resort)**
-    - From `MacBookPro16,2` → e.g. `MacBookAir9,1` or `iMac20,1`. Loosens AGDC policies (different SMBIOS may load a different framebuffer kext or different AGDP rules).
-    - Major change with cascading implications: BT (per memory: BT was fixed by USBMap not SMBIOS, so probably safe), audio, power management, App Store services, sleep behavior. Avoid unless 1–3 fail.
+4. **`agdpmod=ignore`** (cheap test, predicted not to help).
+    - Single boot-arg edit, easy revert.
+    - Predicted not to help because rejection is at framebuffer level (port-type allow-list), not AGDP level. But cheap enough to try once for empirical confirmation. If it does clear the rejection, we learn that AGDP is involved after all.
 
-5. **HDMI port test under new config (con1, busid=1)**
-    - VBT confirms no LSPCON, native HDMI 1.4 TMDS. With `type=DP(0x400)` (current commit), DDI B will likely emit DP signaling that the HDMI display rejects → portMode=1, sinkCount=0 (the old failure mode).
-    - Worth testing once but expected to fail without a fundamental approach change.
-    - If we want it to actually work: try `type=HDMI(0x800)` for con1 specifically, accepting that WEG's HDMI conversion is documented broken on Ice Lake (acidanthera/bugtracker #1616) but worth empirical retest.
+5. **`has-lspcon-con1=1` for HDMI port only** (risky, narrow scope).
+    - Forces WEG LSPCON probe on DDI B specifically. VBT says no LSPCON on con1, so probe writes I²C registers to a non-existent chip. Risk: bus hang on DDI B, possibly black-screening the HDMI port.
+    - Only worth trying if (1)–(3) fail and we're willing to accept HDMI port instability. Don't apply to con2/con3.
+
+### Why we no longer expect changing `framebuffer-conN-type` to help
+
+Static type (`con1-type=DP(0x400)`) is set in DeviceProperties for connector descriptor metadata; runtime `portType` is computed independently from link training / DPCD probe / silicon path. Empirically: con1=DP(0x400) yields runtime portType=18, con3=DP(0x400) yields runtime portType=10. Static value does not feed into the rejection comparison.
 
 ---
 

@@ -509,16 +509,34 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
         - The earlier `[IGFB][ERROR][PORT]` events that the broader search initially flagged were a **different error class**: `_DSM function 18 call failed 0xe00002bc` (= `kIOReturnUnsupported`). That's an ACPI Device-Specific Method invocation failure — Apple's iGPU calls Apple-firmware-specific `_DSM` methods that don't exist in our Insyde firmware. **Harmless ACPI noise**, completely unrelated to port-type rejection.
     - **HDMI was being detected in pre-`ignore` boots too**: `[IGFB][LOG][DPCD] DWN_STRM_PORT0_CAP Type: 0X3` and `HPD Aware: 1` log lines appear, meaning the iGPU was reading DPCD over the aux channel. The cable was electrically detected in every boot. The rejection just happened via different code paths and possibly silently in pre-`ignore` boots (HOT_PLUG path on hot-replug, [PORT] polling path only when `agdpmod=ignore`).
 
-19. **2026-05-06 — Implication: `agdpmod=ignore` is NOT a no-op on this SMBIOS.**
+19. **2026-05-06 — `agdpmod=ignore` vs `vit9696`: refined comparison + retracted revert recommendation.**
     - Contrary to entry #15's initial assumption, `agdpmod=ignore` empirically changes framebuffer behavior:
-        - With `vit9696`: WEG patches AGDP's board-id check; framebuffer init proceeds quietly without boot-init port-type polling.
-        - With `ignore`: WEG applies no AGDP patches; framebuffer runs aggressive boot-init port classification that fails repeatedly with `Invalid port type 18`.
-    - The mechanism is opaque (we'd need to disassemble both AGDP-patched and AGDP-stock paths to fully understand), but the empirical evidence is clear from historical log analysis.
-    - **Recommendation: revert `agdpmod=ignore` → `agdpmod=vit9696`.** Reasons:
-        1. `vit9696` produces less log spam (no boot-init port-type rejection polling).
-        2. `vit9696` is a safer default if SMBIOS ever changes.
-        3. Neither variant fixes the external display rejection, but `vit9696` is the cleaner state.
-    - Status: revert pending user approval.
+        - With `vit9696`: WEG patches AGDP's board-id check; framebuffer enumerates FB1/FB2 but **does NOT run boot-init `ConnectionProbe`** on external connectors. No port-type classification at boot, no `[PORT]` rejection log. Externals stay `fOnline = 0` silently.
+        - With `ignore`: WEG applies no AGDP patches; framebuffer runs **deferred boot-init `ConnectionProbe`** (~1m 43s after boot) on external connectors, classifies them, fails with `Invalid port type 18`, polls 8× over ~7 sec.
+    - **Initially recommended a revert to `vit9696` for log-cleanliness.** **RETRACTED 2026-05-06 after user pushback.** The user's argument is correct: log cleanliness is not the goal — fixing the external display is. Both configs equally fail to attach the display; the choice is purely diagnostic.
+    - **Refined position: keep `agdpmod=ignore`** for now. Reasons:
+        1. Both configs equally reject the external display at port-type-allow-list level (no functional advantage to either).
+        2. `agdpmod=ignore` provides **more diagnostic visibility** — boot-init `[PORT]` rejection events give us additional observable behavior to instrument with future patches.
+        3. `vit9696` would mute that information without a corresponding gain.
+        4. **The cable IS being detected in both configs** (DPCD reads succeed in both, reporting downstream port type 0x3 = HDMI per DP spec). Detection isn't the issue; classification is.
+    - Status: no revert. Boot-args remain `agdpmod=ignore` + `-igfxtypec` (added in entry pending reboot test).
+
+20. **2026-05-06 — Tangent investigation: ACPI `_DSM` function 0x12 — RULED OUT.**
+    - **Context:** earlier kernel logs in pre-`agdpmod=ignore` boots showed `[IGFB][ERROR][PORT] _DSM function 18 call failed 0xe00002bc`. The string contains the literal "function 18", which numerically matches our runtime portType=18 rejection. Worth investigating whether they're related.
+    - **Decode of SSDT-5** (`\_SB.PCI0.GFX0._DSM`, lines 2639–2872):
+        - UUID `3e5b41c6-eb1d-4260-9d15-c71fbadae414` = **Intel IGD OpRegion DSM** (Linux i915 / Windows IGCC use this; Apple does not).
+        - Function 0x12 (line 2850): calls Insyde EC mailbox method `IMMC` with sub-command `0x03` against `DDIN` (DDI number from `Arg3[0]`), returns 5-byte status buffer. **EC round-trip, not a port-type classifier.**
+        - Function 0x13 is symmetric for sub-command `0x06`.
+        - **Gate at line 2643:** `If (((PCHS == PCHN) && ((Arg2 == 0x12) || (Arg2 == 0x13))))`. `PCHS` is runtime-read 16-bit PCH stepping (DSDT line 4175); `PCHN` is constant `0x03` (DSDT line 6164). If `PCHS != 3`, falling into `Case(0x12)` references undefined names → undefined-behavior territory.
+        - **Function-0 supported-functions bitmap is also gated:** `0x000DE7FF` if `PCHS == PCHN` (advertises 0x12/0x13), else `0x0001E7FF` (masks them out). Sane drivers query function 0 first and respect the mask.
+    - **Why this is NOT what's rejecting our external displays:**
+        1. **Wrong UUID space.** macOS `AppleIntelICLLPGraphicsFramebuffer` uses Apple's own DSM UUID (`A0B5B7C6-...`, the one OpenCore synthesizes via `DeviceProperties > Add`). Apple's iGPU stack historically does not consume the Intel IGD OpRegion DSM.
+        2. **Rejection site is the framebuffer kext binary, not ACPI.** "Unsupported port type 18" / "Invalid port type 18" strings live inside the kext; the rejection is emitted from the hot-plug / port-classification handler that reads PCH/PHY registers. No ACPI evaluation is on that codepath.
+        3. **Firmware bitmap masks 0x12/0x13 unless `PCHS == 3`.** A well-behaved driver wouldn't invoke function 0x12 when masked. Even if Apple did, the ACPI side wouldn't generate the kext's "port type 18" rejection log line.
+    - **The matching numeral 18 (= 0x12) is two unrelated enum spaces:** `_DSM` function index 0x12 (ACPI) ≠ runtime `portType` 0x12 (framebuffer kext). Coincidence.
+    - **Cheap PCHS sanity check** (deferrable): `setpci -s 00:1f.0 0x08.b` from Linux, or a tiny SSDT debug print. Tells us whether the firmware advertises 0x12/0x13 in its bitmap. **Doesn't change the rejection mechanism either way.**
+    - **DPCD log line clarification:** `[IGFB][LOG][DPCD] DWN_STRM_PORT0_CAP Type: 0X3` = downstream port type 0x3 = **HDMI** per DP spec (0=DP, 1=VGA, 2=DVI, 3=HDMI, 4=Other-no-EDID, 5=DP++/HDMI bridge). Informational, not an error. Confirms the cable IS detected and characterized as serving an HDMI sink. Rejection happens later in the kext's port-type-allow-list, not here.
+    - **Conclusion:** `_DSM` 0x12 path is a confirmed dead-end for external-display debugging. Recorded here so we don't re-explore it later. The actual lever remains the framebuffer kext's port-type-allow-list (kernel-patch territory).
 
 ---
 

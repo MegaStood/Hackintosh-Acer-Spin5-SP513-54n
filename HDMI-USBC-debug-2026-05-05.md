@@ -79,27 +79,29 @@ framebuffer-fbmem              = <00003001>      (19 MB — bumped 2026-05-06; w
 framebuffer-patch-enable       = 1
 framebuffer-stolenmem          = <00006002>      (38 MB — bumped 2026-05-06; was 19 MB)
 framebuffer-unifiedmem         = <00000080>      (2 GB)
-enable-lspcon-support          = <01000000>      (added 2026-05-06; pending reboot/test)
-hda-gfx                        = 'onboard-1'    (HDMI audio routing)
 igfxfw                         = <02000000>     (firmware load mode 2)
 model                          = 'Intel Iris Plus Graphics G7'
 ```
 
 **Differences from pre-rework backup (`config-pre-surface-rework.plist.bak`):**
 - **Removed** (still missing): all 18 `framebuffer-con1/2/3-*` overrides + `enable-cfl-backlight-fix`
-- **Boot-args**: `igfxlspcon=1` removed, `igfxonln=1` re-appended (different position than backup but functionally equivalent)
+- **Boot-args**: `igfxlspcon=1` removed, `igfxonln=1` re-appended, `agdpmod=vit9696 → agdpmod=ignore` (2026-05-06)
+- **Removed 2026-05-06 (post-test):** `enable-lspcon-support` (confirmed inert, see entry #12), `hda-gfx = 'onboard-1'` (jlempen-inspired test, see entry #15)
 - Everything else identical
 
 ### Boot-args (live)
 ```
-keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod=vit9696 alcid=13 -v -no_compat_check -igfxdbg -liludbgall igfxonln=1
+keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod=ignore alcid=13 -v -no_compat_check -igfxdbg -liludbgall igfxonln=1
 ```
 
-`-igfxdbg -liludbgall` is on for diagnostic verbosity. Keep until done debugging.
+Notes:
+- `-igfxdbg -liludbgall` is on for diagnostic verbosity. Keep until done debugging.
+- `agdpmod=ignore` (changed from `vit9696` 2026-05-06) — see entry #15 for rationale and result. **For MacBookPro16,2 SMBIOS, `vit9696` and `ignore` are functionally equivalent** because that board-id is natively accepted by AGDP without any patches.
 
 ### Available backups in ESP
-- `/Volumes/ESP/EFI/OC/config-pre-lspcon-test.plist.bak` — pre-LSPCON edit (2026-05-06; has stolenmem 38 / fbmem 19, no enable-lspcon-support).
-- `/Volumes/ESP/EFI/OC/config-pre-stolenmem-bump.plist.bak` — pre-memory-bump (2026-05-06; has stolenmem 19 / fbmem 9, no enable-lspcon-support).
+- `/Volumes/ESP/EFI/OC/config-pre-agdpmod-ignore.plist.bak` — pre-agdpmod swap (2026-05-06; has stolenmem 38 / fbmem 19, enable-lspcon-support, hda-gfx, agdpmod=vit9696).
+- `/Volumes/ESP/EFI/OC/config-pre-lspcon-test.plist.bak` — pre-LSPCON edit (2026-05-06; has stolenmem 38 / fbmem 19, no enable-lspcon-support, agdpmod=vit9696).
+- `/Volumes/ESP/EFI/OC/config-pre-stolenmem-bump.plist.bak` — pre-memory-bump (2026-05-06; has stolenmem 19 / fbmem 9, no enable-lspcon-support, agdpmod=vit9696).
 - `/Volumes/ESP/EFI/OC/config-pre-surface-rework.plist.bak` (64 KB) — pre-rework working baseline. **Use this for clean revert to pre-2026-05-05 state.**
 - `/Volumes/ESP/EFI/OC/config-pre-hdmi-fb.plist.bak` — earlier baseline (before any HDMI work).
 - Other older `*.bak` files for previous changes.
@@ -445,9 +447,43 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
         - **WEG kernel patch** (binary patch the port-type compare instruction in `AppleIntelICLLPGraphicsFramebuffer::handleHotPlug` to add 10 and 18 to the accepted list) is now the most-targeted next move. Requires disassembling the kext to find the comparison.
         - **SMBIOS change** is the second-most plausible — different SMBIOS may load a different framebuffer kext version with different port-type allow-lists.
 
+15. **2026-05-06 — `agdpmod=ignore` test (prediction: null result; confirmed null).**
+    - Swapped boot-arg `agdpmod=vit9696 → agdpmod=ignore`. Backup: `config-pre-agdpmod-ignore.plist.bak`.
+    - **Result: confirmed no effect on rejection.** Same `port type 18` rejection on HDMI port, same `port type 10` on USB-C. FB@1/FB@2 remain `IOFBIntegrated = Yes` with no `IODisplayConnect` children.
+    - **Important nuance discovered:** `agdpmod=ignore` does NOT mean "AGDP disabled entirely" — per WEG semantics, it means "don't apply any AGDP patches" (let AGDP run as Apple ships it). For `MacBookPro16,2` SMBIOS, the board-id `Mac-B4831CEBD52A0C4C` is **natively accepted by AGDP without any patching**. So `agdpmod=vit9696` (patch board-id check) and `agdpmod=ignore` (don't patch) are **functionally equivalent on our SMBIOS**. The test was effectively a no-op comparison; we'd need to actually unload/disable AGDP via `Kernel > Block` to see truly "no AGDP" behavior.
+    - **New rejection log path discovered: `[IGFB][ERROR][PORT] Invalid port type N`.** Distinct from the `[HOT_PLUG]` subsystem messages we saw on hot-replug. This `[PORT]` path fires at boot init when display is already attached (no HPD edge), polling every ~1 sec for ~7 seconds. Same underlying rejection (port-type-allow-list mismatch), different log subsystem:
+
+        | Trigger | Subsystem | Message | When |
+        |---|---|---|---|
+        | HPD edge transition (unplug/replug) | `[HOT_PLUG]` | `Unsupported port type N` + `Non-managed external displays are no longer supported` | Hot-plug events |
+        | Boot init / port classification with cable already attached | `[PORT]` | `Invalid port type N` | Boot when cable plugged |
+
+    - **Tooling discovery:** `/usr/bin/log` works **without sudo** for kernel events on this system. The `log` command was being shadowed by zsh's `log` builtin all session — that's why earlier `log show` invocations failed with `too many arguments`. Using absolute path `/usr/bin/log show ...` works without password. Eliminates the dump-to-file copy-paste loop.
+
+16. **2026-05-06 — Web research (acidanthera bugtracker / WhateverGreen / Hackintosh community repos).**
+    - Goal: find published fixes for `Unsupported port type 10/18` + `Non-managed external displays` on Ice Lake (8A52) under Sonoma. Sonoma has been out since 2023-09; if a fix exists, it should be findable.
+    - **Verdict: no public fix exists** for the exact errors on Ice Lake. Zero hits on the exact strings across acidanthera/bugtracker, GitHub issues, InsanelyMac, tonymacx86, Dortania, or community repos.
+    - **Confirming sources:**
+        - [acidanthera/bugtracker #1616](https://github.com/acidanthera/bugtracker/issues/1616) — "WhateverGreen's DP to HDMI patch has no effect on Ice Lake platforms." Confirms our entry #14 conclusion at upstream level.
+        - [acidanthera/bugtracker #1432](https://github.com/acidanthera/bugtracker/issues/1432) — open umbrella issue for ICL framebuffer support; no port-type-rejection reproducer on file.
+        - [m0d16l14n1/icelake-hackintosh](https://github.com/m0d16l14n1/icelake-hackintosh) — community status tracker explicitly marks "No HDMI" and "Type-C to HDMI" as **NOT FIXED, no WA available**.
+        - [Lorys89/DELL_VOSTRO_5401-ICE-LAKE](https://github.com/Lorys89/DELL_VOSTRO_5401-ICE-LAKE) — same i7-1065G7 CPU as Spin 5; Sonoma report explicitly: "HDMI not supported, Type-C to HDMI not supported."
+        - WhateverGreen README + IntelHD FAQ — **no DeviceProperty key exists** for runtime port-type rewrite (no `framebuffer-port-type-rewrite`, no `enable-icllp-port-type-fix`, etc.).
+    - **One repo claims a recent partial fix:** [jlempen/Surface-Laptop-3-OpenCore commit 5b1b5f58](https://github.com/jlempen/Surface-Laptop-3-OpenCore/commit/5b1b5f58) (2025-06-20, Sequoia). README says "Fixed external displays over USB-C." **Actual diff is mostly whitespace.** The only substantive iGPU change: **removed `hda-gfx`/`No-hda-gfx` keys** from the iGPU device-properties.
+        - Caveat: SL3 has NO built-in HDMI port (only USB-C with native DP-alt-mode through onboard PD/mux, no Thunderbolt). Different topology from Spin 5. May be coincidental with Sequoia upgrade.
+    - **Implication for our candidate-experiments list:** WEG kernel patch on `AppleIntelICLLPGraphicsFramebuffer` (previously candidate #1) has **no public ICL precedent** — community-authored binary patches exist for KBL/CFL framebuffers but not ICL. Higher implementation cost than I estimated. Demoted from #1.
+    - Honest framing: this is a **known-unsolved Hackintosh problem** on Ice Lake. There is no zero-config-edit "magic fix" published anywhere.
+
+17. **2026-05-06 — Cleanup edits: remove `enable-lspcon-support` and `hda-gfx`.**
+    - `enable-lspcon-support`: confirmed inert (entry #12). Removed for cleaner config and to isolate variables before next experiment.
+    - `hda-gfx = 'onboard-1'`: removed as the jlempen-inspired test (entry #16). Trade-off: HDMI audio output will not work if external display is ever accepted. Reversible (just re-add the key with same value).
+    - **Two changes in one edit** (deliberately, per user direction). Both are deletions, no risk of breaking either internal display or boot. No backup created (per user direction); existing backups (`config-pre-agdpmod-ignore.plist.bak` etc.) provide adequate restore points.
+    - **Boot-args left as `agdpmod=ignore`** (per user choice) — though `vit9696` would be functionally equivalent for cleanup purposes.
+    - **Status:** edit applied to ESP, awaiting reboot to test. Predicted result: no change to port-type rejection (jlempen's "fix" claim is suspected to be coincidental with Sequoia upgrade).
+
 ---
 
-## Test results matrix — `5029ee0` connector overrides + LSPCON flag
+## Test results matrix — `5029ee0` connector overrides (post-cleanup)
 
 | Path | Plug | DDI event? | Static type | Runtime portType | portMode | sinkCount | Result |
 |---|---|---|---|---|---|---|---|
@@ -456,54 +492,76 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
 | REAR USB-C (con2, busid=2) | Not yet tested as primary plug | ✓ glitched once during front-plug transient | DP (0x400) | (10 expected) | (3 expected) | n/a | inconclusive — need dedicated test |
 | Internal eDP (con0, default) | always-on | n/a | LVDS (0x02) | LVDS | n/a | n/a | ✓ working |
 
-**Findings:**
+**Findings (consolidated 2026-05-06):**
 - All three external DDI mappings are **proven correct** (DDI events fire on the expected DDI per Linux/VBT data).
-- Two distinct runtime `portType` rejection buckets: `18` for native DDI (HDMI port), `10` for TC PHY (USB-C ports). Same downstream `Non-managed external displays are no longer supported` rejection in both.
+- Two distinct runtime `portType` rejection buckets: `18` for native DDI (HDMI port), `10` for TC PHY (USB-C ports).
+- Two distinct rejection log paths in `AppleIntelICLLPGraphicsFramebuffer` (entry #15):
+    - `[IGFB][ERROR][HOT_PLUG] Unsupported port type N` + `Non-managed external displays are no longer supported` — fires on hot-plug events (HPD edge transitions)
+    - `[IGFB][ERROR][PORT] Invalid port type N` — fires at boot init when display is already attached (no HPD edge); polls ~1× per second for several seconds
 - Static `framebuffer-conN-type` does **not** influence runtime `portType`. Changing it won't help.
-- LSPCON code path **confirmed inert** with global `enable-lspcon-support=1` alone (no per-connector flags).
-- The rejection happens inside `AppleIntelICLLPGraphicsFramebuffer` at port-type-allow-list level, **upstream of AGDC**. The `AGDC Callback is not yet registered!!` in logs is a misleading harmless message.
+- LSPCON code path **confirmed inert** with global `enable-lspcon-support=1` alone (no per-connector flags). Property removed (entry #17).
+- `agdpmod=ignore` test confirmed null — for `MacBookPro16,2` SMBIOS, `vit9696` and `ignore` are functionally equivalent because the board-id is natively accepted by AGDP without patches.
+- The rejection happens inside `AppleIntelICLLPGraphicsFramebuffer` at port-type-allow-list level. The `AGDC Callback is not yet registered!!` in logs is a misleading harmless message.
+- **No public fix exists** on Ice Lake (per entry #16 web research). Multiple Ice Lake repos confirm this is unsolved. WhateverGreen has no DeviceProperty key for runtime port-type rewrite.
 
 ---
 
-## Candidate next-step experiments (revised 2026-05-06 after Path A test + LSPCON null result)
+## Candidate next-step experiments (revised 2026-05-06, post-research)
 
-> **Notes:**
-> - Previous suggestion `agdpmod=vit9696 → agdpmod=pikera` was wrong — `pikera` is for AMD Navi/Vega dGPU board-id mismatch, not relevant for Intel iGPU. Permanently removed.
-> - LSPCON probe (entry #12) tested and **confirmed inert** without per-connector `has-lspcon-conN=1`. Property left in config (harmless) for now.
-> - Path A (HDMI port) tested (entry #13) — produces `Unsupported port type 18` + `portMode=1` + `sinkCount=0`. Not solved by any current config edit.
+> **Status of prior candidates:**
+> - `agdpmod=vit9696 → pikera`: wrong fix (AMD dGPU only). Permanently removed.
+> - `enable-lspcon-support=1` (global): tested, confirmed inert. Property removed (entry #17).
+> - `agdpmod=vit9696 → ignore`: tested, confirmed null on this SMBIOS (entry #15). Boot-args still set to `ignore` for now (functionally same as `vit9696` here).
+> - **Web research (entry #16): no public fix exists for Ice Lake port-type-10/18 rejection. Acknowledge this is a known-unsolved problem.**
 
-1. **WhateverGreen kernel patch — port-type allow-list expansion** (most-targeted, requires deep work).
-    - Goal: patch `AppleIntelICLLPGraphicsFramebuffer::handleHotPlug` (or whichever method emits `Unsupported port type N`) to **accept** runtime `portType = 10` and `portType = 18`, OR to rewrite them to `portType = 2` (DP) at the comparison site.
-    - Steps:
-        1. Disassemble `/System/Library/Extensions/AppleIntelICLLPGraphicsFramebuffer.kext/Contents/MacOS/AppleIntelICLLPGraphicsFramebuffer` (binary `Mach-O 64-bit x86_64`).
-        2. Find the string "Unsupported port type" — locate its xref to identify the comparison instruction.
-        3. Identify the constant being compared (e.g. `cmp eax, 2` or `cmp eax, 4` for accepted values; or a switch table).
-        4. Author OpenCore `Kernel > Patch` entry: replace pattern with one that accepts `0x0A` and `0x12`.
-    - High effort (requires disassembly skill). Highest probability of being a real fix.
+1. **`-igfxtypec` boot-arg** (cheap, targeted at USB-C path).
+    - Documented WEG flag — forces DP signaling on Type-C platforms. Targets the runtime portType=10 rejection on TC PHY (USB-C) specifically.
+    - Single boot-arg edit, single-variable test. Easy revert.
+    - **Honest expectation:** unclear if it actually addresses port-type-allow-list rejection or only signaling-side concerns. Worth empirical test.
 
-2. **WhateverGreen high-level port-type rewrite via DeviceProperties** (lower effort, lower probability).
-    - Investigate WEG flags that affect runtime port-type classification:
-        - `force-online=1` per-connector (instead of via `igfxonln=1` boot-arg) — different code path.
-        - Surface-profile aggressive `enable-*` flags (`enable-dpcd-max-link-rate-fix`, `enable-max-pixel-clock-override`, `enable-hdmi-dividers-fix`, etc.) applied **one at a time** with single-variable testing.
-        - `disable-typec-framebuffer-unload` — if it exists in our WEG version.
-    - Risky given prior FB0 black-screen with bundled changes. Single-variable approach mandatory.
+2. **Test `hda-gfx` removal in isolation** (entry #17 already in place; awaiting reboot/test).
+    - Per jlempen's Surface-Laptop-3 commit 5b1b5f58 — only substantive change in the only repo claiming a recent ICL external-display fix.
+    - Predicted result: **no fix** (suspected jlempen claim is coincidental with Sequoia upgrade), but it costs nothing to verify since it's already in place.
+    - If anything works after this reboot — investigate why. If not, leave removed and move to next experiment.
 
-3. **SMBIOS change** (different framebuffer kext + AGDP rules).
-    - From `MacBookPro16,2` → e.g. `MacBookAir9,1` (closer match physically — Ice Lake ultraportable with internal panel + HDMI/USB-C externals). Different SMBIOS may load a different framebuffer kext version or have different port-type allow-lists.
-    - Cascading effects: BT (per memory: fixed via USBMap, probably safe), audio (alcid may need adjusting), power management, App Store services, sleep behavior, hibernate.
-    - Reasonable as a one-shot test if (1) and (2) fail or are too involved.
+3. **WhateverGreen high-level flags via DeviceProperties** (lower-cost, lower-probability).
+    - Apply Surface-profile flags **one at a time** with single-variable testing:
+        - `enable-hdmi-dividers-fix` (HDMI clock divider fix; conceptually unrelated to port-type but part of Surface profile).
+        - `enable-max-pixel-clock-override` (max pixel clock override).
+        - `enable-dpcd-max-link-rate-fix` (DPCD max link rate fix).
+    - Each: single boot/single-variable. Document delta in IORegistry FB state.
+    - Risky given prior FB0 black-screen with bundled changes (entry #5). Hard rule: never bundle.
 
-4. **`agdpmod=ignore`** (cheap test, predicted not to help).
-    - Single boot-arg edit, easy revert.
-    - Predicted not to help because rejection is at framebuffer level (port-type allow-list), not AGDP level. But cheap enough to try once for empirical confirmation. If it does clear the rejection, we learn that AGDP is involved after all.
+4. **SMBIOS change to `MacBookAir9,1`** (broader change, plausible payoff).
+    - Different SMBIOS may load a different framebuffer kext version with different port-type allow-lists. Closer physical match to Spin 5 (Ice Lake ultrabook with HDMI + USB-C externals).
+    - Per memory: BT was fixed via USBMap (model = MacBookAir9,1 there), so SMBIOS change should preserve BT. May need adjustments to: alcid, power management profiles, App Store entitlements, sleep behavior.
+    - Reasonable as a focused test if (1)–(3) fail.
 
-5. **`has-lspcon-con1=1` for HDMI port only** (risky, narrow scope).
-    - Forces WEG LSPCON probe on DDI B specifically. VBT says no LSPCON on con1, so probe writes I²C registers to a non-existent chip. Risk: bus hang on DDI B, possibly black-screening the HDMI port.
-    - Only worth trying if (1)–(3) fail and we're willing to accept HDMI port instability. Don't apply to con2/con3.
+5. **WhateverGreen kernel patch — port-type allow-list expansion** (high effort, no public ICL precedent).
+    - **Demoted from prior #1** because per entry #16 web research, no community-authored binary patch against `AppleIntelICLLPGraphicsFramebuffer` exists publicly that addresses portType rewrite. The KBL/CFL "port-type-acceptance" patches do not transfer — ICL kext layout is different.
+    - Steps would be: disassemble `/S/L/E/AppleIntelICLLPGraphicsFramebuffer.kext/Contents/MacOS/AppleIntelICLLPGraphicsFramebuffer`; find xref of `Invalid port type` and/or `Unsupported port type` strings; identify comparison constants; author OC `Kernel > Patch` to add `0x0A` and `0x12` to the accepted set.
+    - Significant time investment to author and validate the binary patch. Do this only if (1)–(4) fail.
+
+6. **`has-lspcon-con1=1` for HDMI port only** (risky, narrow scope, low payoff).
+    - Forces WEG LSPCON probe on DDI B. VBT says no LSPCON, so probe writes I²C to non-existent chip. Risk: bus hang on DDI B.
+    - Only meaningful if all higher-priority candidates fail. Don't apply to con2/con3 under any circumstance.
+
+7. **Report fresh issue at acidanthera/bugtracker** (community contribution).
+    - With full IOReg dump + `/usr/bin/log show` capture + Linux i915/VBT decode comparison.
+    - Issue #1432 is the canonical ICL umbrella issue and has no `port type 10/18` reproducer on file. Adding one would help the community even if no immediate fix lands.
 
 ### Why we no longer expect changing `framebuffer-conN-type` to help
 
 Static type (`con1-type=DP(0x400)`) is set in DeviceProperties for connector descriptor metadata; runtime `portType` is computed independently from link training / DPCD probe / silicon path. Empirically: con1=DP(0x400) yields runtime portType=18, con3=DP(0x400) yields runtime portType=10. Static value does not feed into the rejection comparison.
+
+### Diagnostic helpers
+- **Use `/usr/bin/log show`, NOT `log show`** — zsh's `log` builtin shadows the macOS log tool. The absolute path works without sudo.
+    ```bash
+    /usr/bin/log show --last 10m --predicate 'eventMessage contains "port type" OR eventMessage contains "HOT_PLUG"' \
+      | grep -v 'log run noninteractively' | head -40
+    ```
+- **Two log subsystem prefixes to grep for:** `[IGFB][ERROR][PORT]` (boot-init rejections) and `[IGFB][ERROR][HOT_PLUG]` (hot-plug rejections).
+- **IORegistry quick-check for external attach:** `ioreg -l -w0 -r -c AppleIntelFramebuffer | grep -E 'AppleIntelFramebuffer@|IODisplayConnect|fOnline'` — if any FB@N has an `IODisplayConnect` child, an external display has been accepted.
 
 ---
 

@@ -593,6 +593,57 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
         5. **Reversibility**: patch is in `config.plist` Kernel > Patch — disabling/removing the entry restores original behavior.
     - **Status:** patch identified, awaiting user approval to add to `Kernel > Patch` array in `config.plist`.
 
+23. **2026-05-06 — Thunderbolt 3 stack confirmed FUNCTIONAL on Spin 5.**
+    - Plugged a Thunderbolt 5 eGPU enclosure containing an NVIDIA RTX 5070 Ti (Blackwell GB203, vendor `0x10de`, device `0x2c05`) into front USB-C, then re-plugged into rear USB-C.
+    - **PCIe-over-Thunderbolt tunneling: WORKING.** The eGPU's GPU and HDA audio companion (device `0x22e9`) both enumerated as PCIe devices in IORegistry. Link came up at PCIe Gen 4 x4 @ 16 GT/s (~64 Gbps = full TB3 bandwidth).
+    - Both USB-C ports (front and rear) are TB3-capable — re-plug between them produced identical enumeration. The TB5 controller endpoint inside the eGPU enclosure (Intel `0x8086:0x1234`) showed up as a 12 Mbps "TBT5" management interface in both cases.
+    - **System Information UI quirk:** `system_profiler SPThunderboltDataType` reports `"No drivers are loaded"` even though the TB stack is loaded and tunneling works. This UI string requires Apple-firmware-specific data structures that the Hackintosh stack doesn't populate, but the underlying functionality is fine. **Don't trust this UI message** — check IORegistry directly: `AppleThunderboltHALType4`, `AppleThunderboltNHIType4`, `IOThunderboltControllerType4` all `registered, matched, active`.
+    - **NVIDIA card cannot drive any display on macOS Sonoma.** Apple removed NVIDIA driver support after macOS 10.13 High Sierra (2018). RTX 5070 Ti enumerated but no driver attached. This is a NVIDIA-specific limitation, not a Thunderbolt limitation.
+    - **What this means for our problem:** TB3 hardware path is working. PCIe traffic over TB is fully functional. Opens the door to:
+        - AMD-based eGPU as a workaround (separate display path through eGPU's own GPU outputs)
+        - **TB3 dock with DP/HDMI output** as the most promising path (see entry #24)
+
+24. **2026-05-06 — DDI 4 / DDI 5 discovery: port type 1 already accepted by the framebuffer.**
+    - **Discovery context:** display sleep/wake cycle on internal panel triggered the framebuffer to query port status on ALL 5 ports it knows about. The output:
+        ```
+        PortIndex = 1, portType = 18, DDI = 1   ← built-in HDMI port (rejected)
+        PortIndex = 2, portType = 9,  DDI = 2   ← rear USB-C (rejected, type 9 not 10)
+        PortIndex = 3, portType = 10, DDI = 3   ← front USB-C (rejected)
+        PortIndex = 4, portType = 1,  DDI = 4   ← TBT3-routed DP virtual DDI ★ ACCEPTED ★
+        PortIndex = 5, portType = 1,  DDI = 5   ← TBT3-routed DP virtual DDI ★ ACCEPTED ★
+        ```
+    - **What DDI 4 and DDI 5 are:** Apple's stock 8A52 framebuffer expects 5 DP slots (matches our entry #1 finding "stock busids `0x02, 0x09, 0x0A, 0x0B, 0x0C`"). DDI 4 and DDI 5 are **TBT3-routed DP virtual DDIs** — on a real Mac, they carry DP traffic that has been tunneled through the Thunderbolt 3 protocol stack. They're already classified as port type 1 (the kext's accepted type from entry #22's whitelist).
+    - **Our config currently overrides only con1, con2, con3** (busids 1, 2, 3) — DDI 4 and 5 still use stock 8A52 values. The framebuffer kext sees them as standard Apple-style TB-routed-DP ports and accepts them.
+    - **Implication: a TB3 *dock* with DP/HDMI output should land display traffic on DDI 4 or 5, not DDI 2/3.** TB3 docks route DP signal **through the TB protocol** (not as raw USB-C DP-alt-mode). The signal arrives at the iGPU through the TBT3 controller's DP adapter path, which the framebuffer kext expects on DDI 4/5 with port type 1.
+    - **This is the most promising fix lead in the entire debug session.** It requires:
+        - A true TB3 *dock* (not a USB-C hub) with DP or HDMI outputs
+        - `AppleThunderboltDPAdapter` kext functional (need to verify)
+        - No config edits, no kext patches
+    - **Refined understanding of port-type meanings (Apple-internal classification):**
+
+        | Port type | Meaning | Apple ICL Macs have this? | Spin 5 has this? | Accepted by allow-list? |
+        |---|---|---|---|---|
+        | 0 | Internal eDP / LVDS panel | ✓ every Mac | ✓ (DDI 0) | ✓ |
+        | 1 | DP routed through TBT3 protocol | ✓ every TBT3 Mac | DDI 4/5 (virtual) | ✓ |
+        | 9 | USB-C ICL TC PHY variant A | ✗ Apple uses TBT3 path | DDI 2 (rear USB-C raw DP-alt) | ✗ |
+        | 10 | USB-C direct DKL PHY DP-alt-mode | ✗ Apple uses TBT3 path | DDI 3 (front USB-C raw DP-alt) | ✗ |
+        | 18 | Native HDMI on combo PHY (TMDS) | ✗ no Apple ICL Mac has native HDMI | DDI 1 (built-in HDMI port) | ✗ |
+
+    - **Why same Genesys hub works on real Mac but fails on Spin 5:** Apple's TBT3 controller firmware **intercepts every USB-C DP-alt-mode connection** — even from a non-TB hub — and re-presents it through TBT3 routing (port type 1). OEM TBT3 firmware (Acer/Insyde) does NOT do this re-routing; signal goes direct to DKL PHY (port type 10). Same physical connection, different runtime classification because of who's brokering at the firmware level.
+
+25. **2026-05-06 — eGPU compatibility notes (for future reference).**
+    - **NVIDIA: any card.** ✗ Not supported on macOS since 10.13 High Sierra (2018). Tested with RTX 5070 Ti.
+    - **AMD R9 Nano (Fiji, GCN 1.2, 2015):** ✗ Not supported on Sonoma. Apple removed `AMDRadeonX4000.kext` (Fiji's driver) in modern macOS. Community port-back attempts exist but flaky.
+    - **AMD RX 7000 series (RDNA 3 / Navi 31/32/33):** ✗ Not supported. No macOS driver exists for any RDNA 3 chip. Mobile variants (e.g., RX 7600M) doubly impractical (mobile form factor).
+    - **AMD cards that DO work on Sonoma:**
+        - Polaris (RX 480/580, RX 460/470/550/560/570) — rock solid
+        - Vega 10 (RX Vega 56/64) — well-supported
+        - Vega 20 (Radeon VII, Vega II) — well-supported
+        - Navi 10 (RX 5700/5700 XT) — well-supported
+        - Navi 21/22/23 (RX 6600/6700/6800/6900) — best modern choice
+    - **Caveat for all:** even with a supported card, Hackintosh + eGPU on Sonoma is fragile. Requires correct AGDP config, sometimes specific kexts. eGPU drives ITS OWN displays — doesn't fix iGPU port-type rejection.
+    - **For our debug context:** eGPU is a workaround path (separate display via eGPU outputs), not a fix for the iGPU. The TB3 dock path (entry #24) is more directly relevant because it lets the iGPU itself drive the display via DDI 4/5.
+
 ---
 
 ## Test results matrix — `5029ee0` connector overrides (post-cleanup)
@@ -601,12 +652,19 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
 |---|---|---|---|---|---|---|---|
 | HDMI port (con1, busid=1) | direct HDMI cable to built-in port | ✓ `ddi = 1` HPD high | DP (0x400) | **18** (0x12) | 1 (DP signaling) | 0 | rejected — `Unsupported port type 18` + non-managed |
 | FRONT USB-C (con3, busid=3) | Genesys hub + HDMI display | ✓ `ddi = 3` HPD high | DP (0x400) | **10** (0x0A) | 3 (DP-alt-mode/TC) | 0 | rejected — `Unsupported port type 10` + non-managed |
-| REAR USB-C (con2, busid=2) | Not yet tested as primary plug | ✓ glitched once during front-plug transient | DP (0x400) | (10 expected) | (3 expected) | n/a | inconclusive — need dedicated test |
-| Internal eDP (con0, default) | always-on | n/a | LVDS (0x02) | LVDS | n/a | n/a | ✓ working |
+| REAR USB-C (con2, busid=2) | (revealed via wake port-status) | ✓ enumerated | DP (0x400) | **9** (0x09) | (untested as primary plug) | n/a | rejected (type 9, different from front!) — needs dedicated plug test |
+| Internal eDP (con0, default) | always-on | n/a | LVDS (0x02) | 0 (LVDS) | n/a | n/a | ✓ working |
+| **DDI 4 (no override; stock 8A52)** | TBT3-routed DP virtual DDI | (revealed via wake port-status) | (stock) | **1** | n/a | 0 (no plug yet) | **★ ACCEPTED port type ★** — would carry TB3-dock DP traffic |
+| **DDI 5 (no override; stock 8A52)** | TBT3-routed DP virtual DDI | (revealed via wake port-status) | (stock) | **1** | n/a | 0 (no plug yet) | **★ ACCEPTED port type ★** — would carry TB3-dock DP traffic |
 
 **Findings (consolidated 2026-05-06):**
 - All three external DDI mappings are **proven correct** (DDI events fire on the expected DDI per Linux/VBT data).
-- Two distinct runtime `portType` rejection buckets: `18` for native DDI (HDMI port), `10` for TC PHY (USB-C ports).
+- **THREE distinct rejection buckets, FIVE port-type values seen in total:**
+    - port type 0 = LVDS (eDP) — accepted ✓
+    - port type 1 = TBT3-routed DP — accepted ✓ (DDI 4 and DDI 5)
+    - port type 9 = USB-C TC PHY variant A — rejected ✗ (rear USB-C / DDI 2)
+    - port type 10 = USB-C direct DKL PHY DP-alt-mode — rejected ✗ (front USB-C / DDI 3)
+    - port type 18 = native HDMI on combo PHY TMDS — rejected ✗ (HDMI port / DDI 1)
 - Two distinct rejection log paths in `AppleIntelICLLPGraphicsFramebuffer` (entry #15):
     - `[IGFB][ERROR][HOT_PLUG] Unsupported port type N` + `Non-managed external displays are no longer supported` — fires on hot-plug events (HPD edge transitions)
     - `[IGFB][ERROR][PORT] Invalid port type N` — fires at boot init when display is already attached (no HPD edge); polls ~1× per second for several seconds
@@ -615,10 +673,14 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
 - `agdpmod=ignore` test confirmed null — for `MacBookPro16,2` SMBIOS, `vit9696` and `ignore` are functionally equivalent because the board-id is natively accepted by AGDP without patches.
 - The rejection happens inside `AppleIntelICLLPGraphicsFramebuffer` at port-type-allow-list level. The `AGDC Callback is not yet registered!!` in logs is a misleading harmless message.
 - **No public fix exists** on Ice Lake (per entry #16 web research). Multiple Ice Lake repos confirm this is unsolved. WhateverGreen has no DeviceProperty key for runtime port-type rewrite.
+- **TB3 stack on Spin 5 is functional** (entry #23) — confirmed by NVIDIA RTX 5070 Ti eGPU PCIe enumeration. `system_profiler` UI string `"Thunderbolt: No drivers loaded"` is misleading — it requires Apple firmware data structures that the Hackintosh stack doesn't populate, but underlying tunneling works.
+- **DDI 4 and DDI 5 already accept port type 1** (entry #24) — TBT3-routed DP virtual DDIs in stock 8A52 framebuffer layout. A TB3 *dock* with DP/HDMI output would route display traffic through these DDIs, bypassing the port-type-rejection problem entirely. No kext patch needed for that path.
 
 ---
 
-## Candidate next-step experiments (revised 2026-05-06, post-research)
+## Candidate next-step experiments (revised 2026-05-06, post-DDI-4/5-discovery)
+
+> **PRIMARY LEAD CHANGED:** Per entry #24, DDI 4/5 already report port type 1 (accepted by the kext's allow-list). A TB3 dock with DP/HDMI output is now the most promising fix path — no kext patches needed. See option (1) below.
 
 > **Status of prior candidates:**
 > - `agdpmod=vit9696 → pikera`: wrong fix (AMD dGPU only). Permanently removed.
@@ -626,17 +688,29 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
 > - `agdpmod=vit9696 → ignore`: tested, confirmed null on this SMBIOS (entry #15). Boot-args still set to `ignore` for now (functionally same as `vit9696` here).
 > - **Web research (entry #16): no public fix exists for Ice Lake port-type-10/18 rejection. Acknowledge this is a known-unsolved problem.**
 
-1. **`-igfxtypec` boot-arg** (cheap, targeted at USB-C path).
-    - Documented WEG flag — forces DP signaling on Type-C platforms. Targets the runtime portType=10 rejection on TC PHY (USB-C) specifically.
-    - Single boot-arg edit, single-variable test. Easy revert.
-    - **Honest expectation:** unclear if it actually addresses port-type-allow-list rejection or only signaling-side concerns. Worth empirical test.
+1. **★ Plug a true Thunderbolt 3 *dock* with DP/HDMI output ★** (most promising; no config edits required)
+    - Per entry #24 finding, the iGPU framebuffer already accepts port type 1 on DDI 4 and DDI 5 (TBT3-routed DP virtual DDIs).
+    - A TB3 dock routes DP signal through the Thunderbolt protocol stack (not raw DP-alt-mode). The signal arrives at the iGPU through the TBT3 controller's DP adapter path, lands on DDI 4 or 5, classifies as port type 1, **gets accepted**.
+    - **Required:** a true TB3 *dock* (CalDigit TS3 Plus / TS4, OWC Thunderbolt 3 Dock, Plugable TBT3-UDZ, Belkin TB3 Pro Dock). NOT a "USB-C hub" or "TB3 hub without display outputs".
+    - **Confidence:** medium-high (~50–65%). TB3 PCIe tunneling confirmed working (entry #23). Remaining uncertainty: whether `AppleThunderboltDPAdapter` engages cleanly on Hackintosh (TB DP adapter is a separate code path from PCIe tunneling).
+    - **No risk** — pure plug test, fully reversible, no config or kext changes.
+    - **Failure mode if it doesn't work:** dock USB ports / ethernet still functional even if displays don't attach.
 
-2. **Test `hda-gfx` removal in isolation** (entry #17 already in place; awaiting reboot/test).
-    - Per jlempen's Surface-Laptop-3 commit 5b1b5f58 — only substantive change in the only repo claiming a recent ICL external-display fix.
-    - Predicted result: **no fix** (suspected jlempen claim is coincidental with Sequoia upgrade), but it costs nothing to verify since it's already in place.
-    - If anything works after this reboot — investigate why. If not, leave removed and move to next experiment.
+2. **WhateverGreen kernel patch — port-type allow-list expansion** (per entry #22; medium risk, medium confidence for partial fix).
+    - 9-byte binary patch identified at file offset `338125568` in `SystemKernelExtensions.kc`:
+        - `Find: 85 C0 74 24 83 F8 01 74 5A`
+        - `Replace: 85 C0 74 24 90 90 90 EB 5A`
+        - Identifier: `com.apple.driver.AppleIntelICLLPGraphicsFramebuffer`
+    - Effect: forces all non-zero port types onto the type-1 acceptance path. Likely to enable USB-C external displays (port type 10), less likely to cleanly enable HDMI port (port type 18 — different signaling semantics).
+    - Boot risk if patched kext panics; recovery via external boot disk and ESP edit.
 
-3. **WhateverGreen high-level flags via DeviceProperties** (lower-cost, lower-probability).
+3. **`-igfxtypec` boot-arg** (DEMOTED — empirically null; entry #21).
+    - Tested in entry #21. Did not change runtime `portType` for any external port. Introduced AUX timeouts on DDI 1 + pipe underruns + DBuf failures. **Net negative.** Don't re-apply unless other experiments suggest a reason to.
+
+4. **Test `hda-gfx` removal in isolation** (DONE — confirmed null, kept removed; entry #17).
+    - Per jlempen's Surface-Laptop-3 commit 5b1b5f58. Removed from both iGPU and HDEF in entries #17 and the subsequent edit. **No effect on rejection.** Stays removed for cleanliness.
+
+5. **WhateverGreen high-level flags via DeviceProperties** (lower-cost, lower-probability).
     - Apply Surface-profile flags **one at a time** with single-variable testing:
         - `enable-hdmi-dividers-fix` (HDMI clock divider fix; conceptually unrelated to port-type but part of Surface profile).
         - `enable-max-pixel-clock-override` (max pixel clock override).

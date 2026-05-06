@@ -21,3 +21,6 @@ System Volume Information/
 
 # Boot logs
 *.log
+
+# ACPI decompilation artifacts (regenerable from .aml via `iasl -d`)
+ACPI Dump/*.dsl

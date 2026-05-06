@@ -447,17 +447,17 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
         - **WEG kernel patch** (binary patch the port-type compare instruction in `AppleIntelICLLPGraphicsFramebuffer::handleHotPlug` to add 10 and 18 to the accepted list) is now the most-targeted next move. Requires disassembling the kext to find the comparison.
         - **SMBIOS change** is the second-most plausible — different SMBIOS may load a different framebuffer kext version with different port-type allow-lists.
 
-15. **2026-05-06 — `agdpmod=ignore` test (prediction: null result; confirmed null).**
+15. **2026-05-06 — `agdpmod=ignore` test + critical correction on its semantics.**
     - Swapped boot-arg `agdpmod=vit9696 → agdpmod=ignore`. Backup: `config-pre-agdpmod-ignore.plist.bak`.
-    - **Result: confirmed no effect on rejection.** Same `port type 18` rejection on HDMI port, same `port type 10` on USB-C. FB@1/FB@2 remain `IOFBIntegrated = Yes` with no `IODisplayConnect` children.
-    - **Important nuance discovered:** `agdpmod=ignore` does NOT mean "AGDP disabled entirely" — per WEG semantics, it means "don't apply any AGDP patches" (let AGDP run as Apple ships it). For `MacBookPro16,2` SMBIOS, the board-id `Mac-B4831CEBD52A0C4C` is **natively accepted by AGDP without any patching**. So `agdpmod=vit9696` (patch board-id check) and `agdpmod=ignore` (don't patch) are **functionally equivalent on our SMBIOS**. The test was effectively a no-op comparison; we'd need to actually unload/disable AGDP via `Kernel > Block` to see truly "no AGDP" behavior.
-    - **New rejection log path discovered: `[IGFB][ERROR][PORT] Invalid port type N`.** Distinct from the `[HOT_PLUG]` subsystem messages we saw on hot-replug. This `[PORT]` path fires at boot init when display is already attached (no HPD edge), polling every ~1 sec for ~7 seconds. Same underlying rejection (port-type-allow-list mismatch), different log subsystem:
+    - **Initial finding:** new rejection log path appeared: `[IGFB][ERROR][PORT] Invalid port type N`. Distinct from the `[HOT_PLUG]` subsystem we'd seen before. This path fires at **boot init when the cable is already attached** (no HPD edge), polling every ~1 sec for ~7 seconds.
 
         | Trigger | Subsystem | Message | When |
         |---|---|---|---|
         | HPD edge transition (unplug/replug) | `[HOT_PLUG]` | `Unsupported port type N` + `Non-managed external displays are no longer supported` | Hot-plug events |
-        | Boot init / port classification with cable already attached | `[PORT]` | `Invalid port type N` | Boot when cable plugged |
+        | Boot init / port classification with cable already attached | `[PORT]` | `Invalid port type N` | Boot when cable plugged AND `agdpmod=ignore` |
 
+    - **CORRECTION (after entry #18 historical analysis):** the `[IGFB][ERROR][PORT] Invalid port type N` polling pattern is **NEW with `agdpmod=ignore`**. Earlier boots with `agdpmod=vit9696` did NOT produce this log. So `agdpmod=ignore` is **not equivalent to `vit9696`** — it actively triggers a code path in the framebuffer that performs aggressive boot-init port classification + rejection.
+    - **WEG `agdpmod=ignore` semantics:** "don't apply any AGDP patches" (let AGDP run stock). On Hackintoshes with non-Apple SMBIOS, this typically means AGDP rejects the board-id and returns errors. On `MacBookPro16,2` (`Mac-B4831CEBD52A0C4C`) which AGDP natively accepts, the practical difference is more subtle but **NOT a no-op** as we initially hypothesized — empirically it changes framebuffer behavior at boot.
     - **Tooling discovery:** `/usr/bin/log` works **without sudo** for kernel events on this system. The `log` command was being shadowed by zsh's `log` builtin all session — that's why earlier `log show` invocations failed with `too many arguments`. Using absolute path `/usr/bin/log show ...` works without password. Eliminates the dump-to-file copy-paste loop.
 
 16. **2026-05-06 — Web research (acidanthera bugtracker / WhateverGreen / Hackintosh community repos).**
@@ -480,6 +480,45 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
     - **Two changes in one edit** (deliberately, per user direction). Both are deletions, no risk of breaking either internal display or boot. No backup created (per user direction); existing backups (`config-pre-agdpmod-ignore.plist.bak` etc.) provide adequate restore points.
     - **Boot-args left as `agdpmod=ignore`** (per user choice) — though `vit9696` would be functionally equivalent for cleanup purposes.
     - **Status:** edit applied to ESP, awaiting reboot to test. Predicted result: no change to port-type rejection (jlempen's "fix" claim is suspected to be coincidental with Sequoia upgrade).
+
+18. **2026-05-06 — Post-cleanup reboot result + historical `[PORT]` polling analysis.**
+    - **Test result for entry #17 cleanup (LSPCON + iGPU `hda-gfx` removal):** **no fix**. Boot 12:17 still produces `[IGFB][ERROR][PORT] Invalid port type 18` polling on DDI 1 (HDMI port, busid=1). FB@1/FB@2 still `IOFBIntegrated = Yes` with no `IODisplayConnect` children. External display still rejected.
+    - **`hda-gfx` was still showing in IORegistry post-removal** because the **HDEF audio device (`PciRoot(0x0)/Pci(0x1F,0x3)`) also has `hda-gfx = 'onboard-1'`** — we'd only removed it from the iGPU side. macOS's AppleHDA pairs them at runtime, exposing it under the iGPU node too. So our entry #17 removal was incomplete: jlempen's commit removed the key from BOTH the iGPU and the HDEF.
+    - **Jlempen commit verification (3597-line diff investigated):** retrieved both pre- and post-commit `config.plist` from jlempen/Surface-Laptop-3-OpenCore commit 5b1b5f58 and ran section-by-section binary-plist size diff. **The 3597 line-count is 99% indentation/format reflow.** Binary plist size delta:
+
+        | Section | Δ bytes |
+        |---|---|
+        | ACPI | 0 |
+        | Booter | 0 |
+        | **DeviceProperties** | **−173** |
+        | Kernel | 0 |
+        | Misc | 0 |
+        | NVRAM | 0 |
+        | PlatformInfo | 0 |
+        | UEFI | 0 |
+
+    - **Actual semantic changes in jlempen's "Fix external display through USB-C":**
+        - iGPU (`PciRoot(0x0)/Pci(0x2,0x0)`): removed `hda-gfx = 'onboard-1'`, removed `No-hda-gfx = <00...>` (8-byte zero placeholder)
+        - HDEF (`PciRoot(0x0)/Pci(0x1F,0x3)`): removed `hda-gfx = 'onboard-1'`, changed `No-hda-gfx` from `<00...>` (data) to `'onboard-1'` (string, non-functional placeholder — macOS doesn't recognize `No-hda-gfx`)
+        - **Zero kernel patches.** **Zero boot-arg changes.** **Zero kext additions/removals.** **Zero SMBIOS changes.** **Zero ACPI changes.**
+    - **Historical log analysis (`/usr/bin/log show --last 24h`)** to test "polling-was-always-there" hypothesis:
+        - Found 12 boots in the last 24h kernel-archive window.
+        - Searched for `Invalid port type` events across all of them.
+        - **Result: only the two boots WITH `agdpmod=ignore` have `Invalid port type N` events.** All earlier boots (with `agdpmod=vit9696`) had ZERO matches.
+        - **Hypothesis falsified.** The `[IGFB][ERROR][PORT] Invalid port type` polling pattern is **NEW**, introduced by the `agdpmod=ignore` change.
+        - The earlier `[IGFB][ERROR][PORT]` events that the broader search initially flagged were a **different error class**: `_DSM function 18 call failed 0xe00002bc` (= `kIOReturnUnsupported`). That's an ACPI Device-Specific Method invocation failure — Apple's iGPU calls Apple-firmware-specific `_DSM` methods that don't exist in our Insyde firmware. **Harmless ACPI noise**, completely unrelated to port-type rejection.
+    - **HDMI was being detected in pre-`ignore` boots too**: `[IGFB][LOG][DPCD] DWN_STRM_PORT0_CAP Type: 0X3` and `HPD Aware: 1` log lines appear, meaning the iGPU was reading DPCD over the aux channel. The cable was electrically detected in every boot. The rejection just happened via different code paths and possibly silently in pre-`ignore` boots (HOT_PLUG path on hot-replug, [PORT] polling path only when `agdpmod=ignore`).
+
+19. **2026-05-06 — Implication: `agdpmod=ignore` is NOT a no-op on this SMBIOS.**
+    - Contrary to entry #15's initial assumption, `agdpmod=ignore` empirically changes framebuffer behavior:
+        - With `vit9696`: WEG patches AGDP's board-id check; framebuffer init proceeds quietly without boot-init port-type polling.
+        - With `ignore`: WEG applies no AGDP patches; framebuffer runs aggressive boot-init port classification that fails repeatedly with `Invalid port type 18`.
+    - The mechanism is opaque (we'd need to disassemble both AGDP-patched and AGDP-stock paths to fully understand), but the empirical evidence is clear from historical log analysis.
+    - **Recommendation: revert `agdpmod=ignore` → `agdpmod=vit9696`.** Reasons:
+        1. `vit9696` produces less log spam (no boot-init port-type rejection polling).
+        2. `vit9696` is a safer default if SMBIOS ever changes.
+        3. Neither variant fixes the external display rejection, but `vit9696` is the cleaner state.
+    - Status: revert pending user approval.
 
 ---
 

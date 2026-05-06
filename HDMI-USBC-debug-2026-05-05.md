@@ -75,10 +75,11 @@ enable-cdclk-frequency-fix     = <01000000>
 enable-dbuf-early-optimizer    = <01000000>
 enable-dvmt-calc-fix           = <01000000>
 enable-hdmi20                  = <01000000>
-framebuffer-fbmem              = <00009000>      (9 MB — DVMT workaround)
+framebuffer-fbmem              = <00003001>      (19 MB — bumped 2026-05-06; was 9 MB)
 framebuffer-patch-enable       = 1
-framebuffer-stolenmem          = <00003001>      (19 MB — DVMT workaround)
+framebuffer-stolenmem          = <00006002>      (38 MB — bumped 2026-05-06; was 19 MB)
 framebuffer-unifiedmem         = <00000080>      (2 GB)
+enable-lspcon-support          = <01000000>      (added 2026-05-06; pending reboot/test)
 hda-gfx                        = 'onboard-1'    (HDMI audio routing)
 igfxfw                         = <02000000>     (firmware load mode 2)
 model                          = 'Intel Iris Plus Graphics G7'
@@ -97,7 +98,9 @@ keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod
 `-igfxdbg -liludbgall` is on for diagnostic verbosity. Keep until done debugging.
 
 ### Available backups in ESP
-- `/Volumes/ESP/EFI/OC/config-pre-surface-rework.plist.bak` (64 KB) — pre-rework working baseline. **Use this for clean revert.**
+- `/Volumes/ESP/EFI/OC/config-pre-lspcon-test.plist.bak` — pre-LSPCON edit (2026-05-06; has stolenmem 38 / fbmem 19, no enable-lspcon-support).
+- `/Volumes/ESP/EFI/OC/config-pre-stolenmem-bump.plist.bak` — pre-memory-bump (2026-05-06; has stolenmem 19 / fbmem 9, no enable-lspcon-support).
+- `/Volumes/ESP/EFI/OC/config-pre-surface-rework.plist.bak` (64 KB) — pre-rework working baseline. **Use this for clean revert to pre-2026-05-05 state.**
 - `/Volumes/ESP/EFI/OC/config-pre-hdmi-fb.plist.bak` — earlier baseline (before any HDMI work).
 - Other older `*.bak` files for previous changes.
 
@@ -380,6 +383,34 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
         - **"Non-managed external displays are no longer supported"** is a hardcoded message in modern macOS T2-class framebuffer code: external displays must pass AGDC/AGDP validation. Non-Apple-blessed attachments get rejected even when silicon would otherwise accept them.
     - Spurious DDI 2 hotplug fired briefly (5 sec before the front plug landed) — driver classified it as `slave port of multi cable display` and dismissed. Cross-talk during PD-controller negotiation, not a real attachment.
 
+10. **2026-05-06 — DVMT memory bump (Path: VRAM headroom).**
+    - Linux confirmed actual BIOS DVMT-prealloc allocation is **64 MB**:
+        ```
+        /proc/iomem:    3b800000-3f7fffff : Graphics Stolen Memory   (= 0x04000000 = 64 MB)
+        i915 debugfs:   stolen-system: total:0x0000000004000000 bytes
+        ```
+    - Existing override `stolenmem=19 MB / fbmem=9 MB` was the canonical workaround for **32 MB** DVMT-prealloc — leaving ~36 MB of stolen memory unused on this hardware.
+    - Bumped to **stolenmem=38 MB / fbmem=19 MB** (sum 57 MB, 7 MB headroom under 64 MB ceiling). Hex bytes: `<00006002>` and `<00003001>` respectively.
+    - `framebuffer-unifiedmem` already at `0x80000000` (2 GB) — left alone (already at the practical ceiling for 32-bit framebuffer kext field; stock 8A52 default is 1.5 GB).
+    - Surface repo's "62 MB stolen + 24 MB fb" config was rejected — that totals 86 MB which **exceeds our 64 MB BIOS ceiling**. Surface hardware presumably has a larger DVMT-prealloc (96 or 128 MB).
+    - **Result post-reboot:** clean. IORegistry shows the new values live. AppleIntelFramebufferController init `~2 sec`, no panic, internal display unaffected. Three `AppleIntelFramebuffer@N` instances enumerated (FB@0/1/2) — same as before. VRAM still reports 2048 MB. No regression.
+    - Backup: `config-pre-stolenmem-bump.plist.bak`.
+
+11. **2026-05-06 — Boot-args audit.** Re-evaluated each token after the user correctly flagged that my earlier suggestion to swap `agdpmod=vit9696 → agdpmod=pikera` was wrong (pikera is the AMD-Navi/Vega black-screen fix, not relevant for Intel iGPU + MacBookPro16,2 SMBIOS). Final verdict: **no boot-arg changes warranted.** Current set is correct:
+    - `agdpmod=vit9696` — correct for Intel iGPU board-id bypass; do **not** swap to pikera.
+    - `-btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck` — load-bearing for AX201 BT, never drop.
+    - `igfxonln=1` — important for external display detection (force-online connectors).
+    - `-igfxdbg -liludbgall -v` — debug logging, keep until external display works.
+
+12. **2026-05-06 — LSPCON code-path test (pending reboot).**
+    - Added single key `enable-lspcon-support = <01000000>` to iGPU DeviceProperties.
+    - Did **not** add per-connector `has-lspcon-conN` (would force WEG to write LSPCON I²C registers to a chip that doesn't exist per VBT — bus-hang risk).
+    - Did **not** add `preferred-lspcon-mode-conN` (only meaningful with `has-lspcon-conN=1`).
+    - Did **not** add boot-arg `igfxlspcon=1` (equivalent of the DeviceProperty; setting both is redundant).
+    - Goal: probe whether engaging the WEG LSPCON code path globally (which then DPCD-probes each connector and silently fails when no LSPCON found) has any incidental effect on the `Unsupported port type 10` rejection at AGDC level. Honest expectation: **unlikely** to fix it (port-type rejection happens upstream of LSPCON code path), but cheap experiment with low risk.
+    - Backup: `config-pre-lspcon-test.plist.bak`.
+    - **Status: edit applied to ESP, not yet rebooted to test.**
+
 ---
 
 ## Test results matrix — `5029ee0` connector overrides
@@ -397,20 +428,23 @@ The mapping is **proven correct** (DDI events fire on the expected DDI per Linux
 
 ## Candidate next-step experiments (in approximate order of cost/value)
 
-1. **Switch `agdpmod=vit9696` → `agdpmod=pikera`** (single boot-arg edit, easy revert)
-    - `vit9696` patches AGDC's board-id check; `pikera` patches a different path (display-validation rather than board-id). Some Ice Lake Hackintoshes only work with one or the other.
-    - If this clears `Unsupported port type 10` and `Non-managed external displays are no longer supported` → success.
+> **Note 2026-05-06:** previous suggestion to swap `agdpmod=vit9696 → agdpmod=pikera` was **wrong** — `pikera` is for AMD Navi/Vega dGPU board-id mismatch (e.g. RX 5700 on iMac SMBIOS), not Intel iGPU port-type-10 rejection. Removed from this list.
 
-2. **`agdpmod=ignore`** (single boot-arg edit, more aggressive)
-    - Disables AGDP validation entirely. May have side effects on display preferences/profiles.
+1. **LSPCON code-path probe (in progress).** `enable-lspcon-support=1` added 2026-05-06; awaiting reboot to test. See session log entry #12 for rationale and risk assessment. Honest expectation: low probability of fixing port-type-10. If no effect → revert and try #2.
 
-3. **Patch port-type rewrite via WhateverGreen patches**
-    - Look into WEG flags to remap "port type 10" → "port type 2" (DP) or 4 (HDMI) in the framebuffer init path.
-    - May require a WhateverGreen kernel patch or `framebuffer-portcount` override.
+2. **WhateverGreen port-type rewrite patches**
+    - Most-targeted attack on `Unsupported port type 10`. Possible mechanisms:
+        - WEG `framebuffer-conN-type` already set to DP(`0x00000400`) for all three external connectors — but the framebuffer's *internal* port-type after probe ends up reported as 10 (= 0x0A = DP+HDMI bits), suggesting WEG's static type override is being overridden by the framebuffer's runtime DP-alt-mode classifier.
+        - Possible workaround: kernel patch (binary patch in OC's `Kernel > Patch`) to rewrite the comparison constant `0x0A` → `0x02` in `AppleIntelICLLPGraphicsFramebuffer::handleHotPlug`. Requires identifying the comparison instruction.
+        - Alternatively: `force-online=1` per-connector (instead of via `igfxonln=1` boot-arg) plus aggressive `enable-*` flags from Surface profile, applied **one at a time**.
+
+3. **`agdpmod=ignore`** (single boot-arg edit, more aggressive than `vit9696`)
+    - Disables AGDP validation entirely, not just board-id check. May have side effects on display preferences/profiles/sleep wake.
+    - Worth trying as a quick experiment — if the rejection is at AGDP level (not framebuffer level), this would clear it.
 
 4. **SMBIOS change (last resort)**
-    - From `MacBookPro16,2` → e.g. `MacBookAir9,1` or `iMac20,1`. Loosens AGDC policies.
-    - Major change with cascading implications: BT, audio, power management, App Store services. Avoid unless 1–3 fail.
+    - From `MacBookPro16,2` → e.g. `MacBookAir9,1` or `iMac20,1`. Loosens AGDC policies (different SMBIOS may load a different framebuffer kext or different AGDP rules).
+    - Major change with cascading implications: BT (per memory: BT was fixed by USBMap not SMBIOS, so probably safe), audio, power management, App Store services, sleep behavior. Avoid unless 1–3 fail.
 
 5. **HDMI port test under new config (con1, busid=1)**
     - VBT confirms no LSPCON, native HDMI 1.4 TMDS. With `type=DP(0x400)` (current commit), DDI B will likely emit DP signaling that the HDMI display rejects → portMode=1, sinkCount=0 (the old failure mode).

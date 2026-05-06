@@ -160,6 +160,14 @@
 			</dict>
 			<dict>
 				<key>Comment</key>
+				<string>iGPU re-notification on S3 wake</string>
+				<key>Enabled</key>
+				<true/>
+				<key>Path</key>
+				<string>SSDT-EXT4-iGPU-Wake.aml</string>
+			</dict>
+			<dict>
+				<key>Comment</key>
 				<string>Sleep Fix</string>
 				<key>Enabled</key>
 				<true/>
@@ -170,7 +178,7 @@
 				<key>Comment</key>
 				<string>AOAC S3</string>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>Path</key>
 				<string>SSDT-NameS3-disable.aml</string>
 			</dict>
@@ -536,7 +544,7 @@
 				<key>Count</key>
 				<integer>0</integer>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>Find</key>
 				<data>
 				X1MzXw==

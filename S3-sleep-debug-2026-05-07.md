@@ -6,17 +6,33 @@ Prior context: hibernate-25 (suspend-to-disk) was previously tested and confirme
 
 ---
 
-## TL;DR — RESOLVED via DarkWake fallback
+## TL;DR — AC sleep works (DarkWake), battery sleep broken (S3 firmware bug)
 
-**Working solution: Phase 1 (`_S3` exposed) + `-noDC9` boot-arg → DarkWake-as-sleep.** Real S3 unfixable on this hardware (Insyde-locked AOAC class, same as Acer Swift 3 SF314-57).
+**Corrected 2026-05-07 afternoon after Phase 6 battery test invalidated the morning's `-noDC9` interpretation.**
 
-- **Phase 1: ✓** Native firmware `_S3` exposed to Darwin (disabled `SSDT-NameS3-disable.aml` + `_S3 → XS3_` rename). Required for `IOSleepSupported = Yes`.
+- **AC power**: macOS keeps the system in DarkWake (per `DarkWakeBackgroundTasks=Yes` in AC profile). Display off, kernel alive, clean wake in <1 sec. **Works.**
+- **Battery power**: macOS attempts real S3 (per `DarkWakeBackgroundTasks=No` in Battery profile). S3 entry succeeds (low draw — 2.8%/h confirmed), but **wake fails at firmware-handoff level** (`0x002A001F : EFI/Bootrom Failure`). Same firmware bug as yesterday, re-confirmed today.
+- **`-noDC9` boot-arg: status uncertain.** Original theory was that `-noDC9` blocks DC9 entry forcing DarkWake fallback. Phase 6 falsified that — system *did* enter real S3 on battery despite `-noDC9` being set. The morning DarkWake was AC-policy-driven, not boot-arg-driven. `-noDC9` may be doing nothing useful on this hardware. Not removed yet (no evidence it's harmful either).
+- **Phase 1 (`_S3` exposure) IS load-bearing** for AC DarkWake to be reachable. `IOSleepSupported = Yes` requires it. Without Phase 1, neither sleep nor DarkWake works.
+- **Real S3 unfixable** on this hardware (Insyde-locked AOAC class, same as Acer Swift 3 SF314-57). Software-only fix not expected to exist.
+
+### Recommended config
+
+- Keep AC sleep enabled (lid close while plugged in → DarkWake → safe wake).
+- **Disable sleep on battery** to avoid the firmware wake bug:
+  ```bash
+  sudo pmset -b disablesleep 1
+  sudo pmset -c sleep 10
+  sudo pmset -c displaysleep 5
+  ```
+
+### Phase outline (chronological)
+
+- **Phase 1: ✓** Native firmware `_S3` exposed to Darwin (disabled `SSDT-NameS3-disable.aml` + `_S3 → XS3_` rename). Required for `IOSleepSupported = Yes`. Load-bearing.
 - **Phase 2: ✓** `pmset` configured: `hibernatemode=0`, `standby=0`, `powernap=0`, `tcpkeepalive=0`, `autopoweroff=0`, `lowbatteryhibernate=0`.
-- **Phase 4 (real S3 attempt, NO `-noDC9`): ✗** S3 entry succeeded (fan stopped, LED breathed), wake failed at firmware-handoff level (`0x002A001F : EFI/Bootrom Failure`). Hard power-off required.
-- **Phase 5 (with `-noDC9`): ✓** DC9 entry blocked by kernel → fallback to DC6 (DarkWake). Display off, kernel alive (heartbeat continuous, zero gap), wake clean (<1 sec) via key press, all peripherals + external display restored.
-- **Conclusion**: Real S3 sleep is firmware-broken on this Spin 5. DarkWake is the working substitute. Both Phase 1 and `-noDC9` are load-bearing — neither can be removed.
-- **Trade-off**: ~3-8W in DarkWake vs ~0.3W in true S3. Battery life ~6-15h vs days. Functionally usable. Same model as Surface laptops' Modern Standby.
-- **Pending**: 1-hour battery drain test to validate practical viability.
+- **Phase 4 (real S3 attempt, NO `-noDC9`): ✗** Battery sleep, S3 entry OK, wake failed (`0x002A001F`). Hard power-off required.
+- **Phase 5 (AC test, with `-noDC9`): ✓** DarkWake on AC, clean wake. Misinterpreted at the time as "`-noDC9` fix"; was actually AC policy.
+- **Phase 6 (battery test, with `-noDC9`): ✗** Real S3 entered (heartbeat stopped at 12:04:56), wake failed (`0x002A001F` at 14:10:01). Battery drain ~2.8%/h confirms deep sleep was reached. Same failure as Phase 4. Falsifies the `-noDC9` theory.
 
 ---
 
@@ -169,6 +185,8 @@ autopoweroff=0   lowbatteryhibernate=0  proximitywake=0
 
 ## Phase 5 — DarkWake test with `-noDC9` (2026-05-07 morning)
 
+> **Interpretation falsified by Phase 6 (afternoon battery test) below.** The "DarkWake via -noDC9" theory turned out to be incorrect — the morning DarkWake was AC-policy-driven, not boot-arg-driven. The data captured in this section is correct; only the *causal interpretation* was wrong. Read Phase 6 first for the corrected model.
+
 ### Setup
 
 - `-noDC9` boot-arg added to NVRAM (committed `e95dae8`).
@@ -286,55 +304,138 @@ This matches the documented Swift 3 behavior. **Software-only fix for real S3 un
 
 ---
 
-## Final config
+## Phase 6 — Battery drain test, falsifies the `-noDC9` theory (2026-05-07 afternoon)
+
+### Setup
+
+- Same hardware config as Phase 5 (USB-C dock, display, mouse, en1).
+- `-noDC9` still in boot-args.
+- AC adapter **physically unplugged**. Battery 100%, discharging.
+- Heartbeat + log stream still running from morning.
+
+### Procedure
+
+```
+12:04:40  test start, battery 100%, on Battery Power
+12:04:40  pmset sleepnow issued
+```
+
+### Observation
+
+Came back ~2h later. System was unresponsive. Recovered (no force-poweroff was needed; pmset log shows boot time still 09:46:02 = no reboot).
+
+### Decisive evidence — heartbeat STOPPED at sleep entry
+
+```
+last heartbeat write: 12:04:56
+no further entries until manual restart
+```
+
+Compare to Phase 5: heartbeat ran continuously through the entire "sleep". Today on battery: heartbeat process was suspended by kernel-level sleep.
+
+→ **Kernel actually slept this time.** Real S3 was reached.
+
+### `pmset -g log` confirms real S3, not DarkWake
+
+```
+12:04:55  Sleep — Entering Sleep state due to 'Software Sleep pid=5555':TCPKeepAlive=disabled Using Batt
+12:04:57  Wake Requests scheduled (CSPNEvaluation deltaSecs=7243 wakeAt=14:05:40)
+12:04:57  PM Client Acks: bluetooth.sleep slow(515ms), apsd slow(2016ms)
+[~2h gap]
+14:10:01  Failure: 0x002A001F : EFI/Bootrom Failure after last point of entry to sleep
+14:10:04  Assertions resumed
+```
+
+Crucial distinctions from Phase 5:
+- "**Entering Sleep state**" (not DarkWake) — actual S3.
+- `Using Batt` — battery profile triggered different sleep policy.
+- `0x002A001F` — same firmware-handoff failure as Phase 4 (yesterday).
+- The scheduled CSPNEvaluation at 14:05:40 likely triggered the failed wake attempt.
+
+### Battery drain — confirms deep sleep was reached
+
+| | Value |
+|---|---|
+| Start | 100% at 12:04:40 |
+| End | 94% at 14:13:15 |
+| Elapsed | ~2.14 hours |
+| **Drain rate** | **~2.8% per hour** |
+
+This rate is consistent with real S3 (sub-1W draw), not DarkWake (3-8W which would be ~10-20%/h on this battery). The deep sleep was real and effective for power saving — the only problem was the wake.
+
+### Re-interpretation of Phase 5
+
+The morning Phase 5 test was on **AC power**. macOS power profile dictionary:
+
+```
+"AC Power"      = { ..., DarkWakeBackgroundTasks=Yes, ... }
+"Battery Power" = { ..., DarkWakeBackgroundTasks=No,  ... }
+```
+
+`DarkWakeBackgroundTasks=Yes` keeps the system in DarkWake (instead of going deeper to S3) so that background tasks (Time Machine, mail, push notifications) can run. `=No` lets the system go to real S3 to save battery.
+
+So the AC-vs-Battery split is **macOS standard policy**, not anything we configured.
+
+`-noDC9` did not block DC9 entry on battery despite the original theory. The system *did* enter DC9/S3 — and crashed at wake, exactly as in Phase 4. So `-noDC9` is not load-bearing for the AC DarkWake behavior, and not protective on battery.
+
+### Corrected model
+
+| Power source | macOS policy | What happens | Outcome |
+|---|---|---|---|
+| AC | DarkWake (background tasks allowed) | Display off, kernel alive, ~3-8W | ✓ Works |
+| Battery | Real S3 (deeper sleep for battery savings) | Kernel suspended, ~0.3W | ✗ Wake fails (firmware bug) |
+
+### Status of `-noDC9`
+
+Unverified. Could be doing nothing useful on this hardware, or could provide some unrelated benefit. We did not run an AC test without `-noDC9` to A/B test. Conservative stance: leave it in (no evidence of harm) but don't claim it's load-bearing.
+
+---
+
+## Final config (corrected)
 
 ### Boot-args
 ```
 keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck
 agdpmod=ignore alcid=13 -v -no_compat_check -igfxdbg -liludbgall igfxonln=1 -noDC9
 ```
+(`-noDC9` retained as not-known-harmful, but unverified.)
 
 ### ACPI
-- `SSDT-NameS3-disable.aml`: in Add list, **disabled** (file present but not loaded)
-- `_S3 → XS3_` rename: **disabled**
-- `SSDT-EXT4-iGPU-Wake.aml`: enabled (irrelevant to current solution; would have helped only if real S3 wake worked)
-- `SSDT-PTSWAKTTS-iGPU.aml`, `SSDT-EXT3-WakeScreen.aml`, `SSDT-GPRW.aml`: enabled
+- `SSDT-NameS3-disable.aml`: in Add list, **disabled**. Phase 1 must stay — required for `IOSleepSupported = Yes`.
+- `_S3 → XS3_` rename: **disabled**. Phase 1.
+- `SSDT-EXT4-iGPU-Wake.aml`: enabled (idle; real S3 wake never reaches the hook).
+- `SSDT-PTSWAKTTS-iGPU.aml`, `SSDT-EXT3-WakeScreen.aml`, `SSDT-GPRW.aml`: enabled.
 
-### pmset (live, may need re-set if NVRAM doesn't persist)
+### pmset — recommended (the actual fix)
+
+```bash
+sudo pmset -b disablesleep 1    # battery: kernel refuses all sleep transitions
+sudo pmset -c sleep 10          # AC: idle-sleep after 10 min → DarkWake (works)
+sudo pmset -c displaysleep 5    # AC: display off after 5 min
+```
+
+`disablesleep 1` on battery is the load-bearing piece. It blocks the broken battery/S3 path while keeping the working AC/DarkWake path. Trade-off: lid close on battery → kernel keeps running at full power → battery drains in ~2-3h. Not ideal, but no wake failure.
+
+Already-set carryover:
 ```
 hibernatemode=0  standby=0  powernap=0  tcpkeepalive=0
 autopoweroff=0   lowbatteryhibernate=0  proximitywake=0
 ```
 
-### Recommended pmset tuning for DarkWake-as-sleep
-```bash
-sudo pmset -a darkwakes 0     # disable scheduled background-task DarkWakes (no auto-wake every 1-3h)
-sudo pmset -a sleep 10        # auto-enter DarkWake after 10 min idle
-sudo pmset -a displaysleep 5  # turn display off after 5 min
-```
+### Daily-driver workflow
 
----
-
-## Pending validation
-
-**1-hour battery drain test** to validate DarkWake-as-sleep is daily-driver viable:
-
-1. Charge to 100%, unplug AC.
-2. `pmset sleepnow`.
-3. Leave for 1 hour.
-4. Wake, run `pmset -g batt`.
-
-Acceptance criteria:
-- < 10% drain/hour → comfortable for full workday use.
-- 10-20% drain/hour → marginal, OK for short sleeps only.
-- > 20% drain/hour → unusable, equivalent to leaving on.
+- Plug in AC before lid close → DarkWake → safe wake.
+- Don't sleep on battery; if you must, shut down properly.
+- If forgotten and lid closed unplugged: kernel stays awake (with `disablesleep 1`), battery drains in 2-3h, no wake failure when you open lid.
 
 ---
 
 ## Things confirmed NOT working / not pursued
 
-- **True S3 sleep**: unfixable in software (firmware-level Insyde issue).
-- **Hibernate-25 (suspend-to-disk)**: unfixable (same firmware class), only succeeded once previously, NVRAM-corruption risk.
-- **`-hbfx-disable-patch-pci`, `igfxfw=2` boot-args**: not tested. With DarkWake working, no incentive to roll the dice on more boot-args.
-- **SMBIOS swap MacBookPro16,2 → MacBookAir9,1**: not pursued; would affect BT (the BTLFX boot-args are SMBIOS-tied).
-- **EXT4 iGPU-Wake hook**: kept enabled but never had a chance to fire (real S3 wake never reached). Harmless idle.
+- **True S3 sleep**: unfixable in software (firmware-level Insyde issue, confirmed twice — Phase 4 + Phase 6).
+- **Hibernate-25 (suspend-to-disk)**: unfixable (same firmware class), NVRAM-corruption risk.
+- **`-noDC9` as a sleep fix**: theory falsified by Phase 6. Did not block DC9/S3 entry on battery.
+- **`-hbfx-disable-patch-pci`, `igfxfw=2` boot-args**: not tested. Same firmware-handoff bug class; low expectation of helping.
+- **SMBIOS swap MacBookPro16,2 → MacBookAir9,1**: not pursued; would affect BT (BTLFX args are SMBIOS-tied).
+- **EXT4 iGPU-Wake hook**: never fires (firmware bug prevents reaching the wake path).
+- **Forcing DarkWake on battery via `darkwakebackgroundtasks 1`**: not tested. Could be a future experiment if AC-only-sleep is too restrictive.

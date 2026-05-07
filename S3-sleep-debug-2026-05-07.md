@@ -391,6 +391,60 @@ Unverified. Could be doing nothing useful on this hardware, or could provide som
 
 ---
 
+## Phase 6 addendum — `log show` forensics (post-incident, 2026-05-07 evening)
+
+Earlier Phase 6 prose claimed "Recovered (no force-poweroff was needed; pmset log shows boot time still 09:46:02 = no reboot)." That was wrong. After re-reading the unified-log capture (`sudo log show --start "2026-05-07 12:04:00" --end "2026-05-07 14:12:00"`), the actual recovery sequence was:
+
+### Corrected user-visible timeline
+
+| Time | Event |
+|---|---|
+| 12:04:40 | `pmset sleepnow` issued, sleep entry begins |
+| 12:04:48.86 | Last unified-log entry (lingering coreauthd/loginwindow teardown) |
+| 12:04:55 | pmset log: "Entering Sleep state due to 'Software Sleep pid=5555' Using Batt" |
+| 12:04:57 | pmset log: scheduled wake at 14:05:40 (CSPNEvaluation maintenance) |
+| **~14:05** | **User pressed key. Fan ramped to high RPM, screen stayed black, SSH unresponsive** |
+| ~14:05:15 | User held power button ~15 seconds → SMC hard cut |
+| 14:09:23 | Cold boot completes (`=== system boot:` marker, fresh VM bootstrap, ACPI re-enumeration, OFF_STATE → ON_STATE) |
+| 14:09:35 | `AppleSMC: Previous shutdown cause: 5` |
+| 14:10:01 | pmset log records the failed wake: `0x002A001F : EFI/Bootrom Failure after last point of entry to sleep` |
+| 14:10:01 | `powerd: Failed to get sleep type. rc:0xe00002c7` (normal for unclean wake path) |
+
+### Evidence that real S3 was reached (falsifies "stuck in DarkWake" hypothesis)
+
+After 12:04:48.86, the kernel produced **zero log entries for 2h 4m 35s** — the next entry is the post-reboot `=== system boot:` marker.
+
+If the system had been in DarkWake for those 2 hours, the log would contain:
+- bluetoothd LE-scan cycles (the pre-sleep section had one every ~300ms)
+- powerd `sleepWake` / scheduled-maintenance assertions
+- mDNSResponder Bonjour activity
+- AppleSmartBatteryManager polls
+- WiFi airportd activity
+
+None of those exist for two hours → CPU was halted → real S3 was reached. Combined with the Phase 6 drain rate measurement (~2.8 %/h, sub-1W), this independently confirms the same conclusion via two methods. The wake handler is the broken stage, not sleep entry.
+
+### Diagnostic: do **not** read `Previous shutdown cause: 5` as "battery drained in DarkWake"
+
+`Previous shutdown cause: 5` is the SMC's signature for "OS lost without a clean shutdown sequence." It covers **both** battery-drain *and* forced power-cut (15s power-button hold). Cause 5 alone cannot distinguish the two. On this machine, the kernel-silence evidence rules out drain — the cause was the user's force-cut after the wake handler hung.
+
+If a future cause-5 event needs to be classified, two persistent post-reboot signals separate the cases:
+- Battery percentage at boot: near-empty → drain; healthy → forced cut.
+- `pmset -g log` retains entries across reboots; check whether the entry preceding the gap was "Sleep" with `Using Batt` (sleep was reached) or maintenance-wake-related noise (DarkWake stuck).
+
+### Wake-hang user-visible signature for next time
+
+If you press a key to wake from battery sleep on this Spin 5 and observe **fan ramps loud, screen stays black, SSH unresponsive** — that is the firmware-bug wake hang. There is no software recovery; only a power-button hold restores control. Do not mistake the resulting cause-5 marker for a DarkWake battery-drain incident.
+
+### Suggested next-time forensic workflow
+
+`log stream` over SSH dies the moment the host hangs, so it only catches gradual failures, not freezes. Better tools for this failure mode:
+
+- `pmset -g log | grep -E "Sleep|Wake|DarkWake"` post-incident — persists across reboots, cleaner than the unified log for sleep accounting.
+- `sudo log show --predicate 'eventMessage CONTAINS "PMRD"' --start <time>` — pulls only the PMRD trace points and capability changes that matter for sleep diagnosis.
+- A second machine running `tail -f` over SSH on a battery-percentage logger before the test — establishes start/end %SOC across the failure independently of pmset.
+
+---
+
 ## Final config (corrected)
 
 ### Boot-args

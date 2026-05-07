@@ -109,7 +109,7 @@ keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck agdpmod
 
 Notes:
 - `-igfxdbg -liludbgall` is on for diagnostic verbosity. Keep until done debugging.
-- `agdpmod=ignore` (changed from `vit9696` 2026-05-06) — see entry #15 for rationale and result. **For MacBookPro16,2 SMBIOS, `vit9696` and `ignore` are functionally equivalent** because that board-id is natively accepted by AGDP without any patches.
+- `agdpmod=ignore` (changed from `vit9696` 2026-05-06) — **load-bearing in combination with the entry #26 pipe=1 fix.** Empirically falsified 2026-05-07 (entry #28): with the pipe=1 framebuffer override active, swapping back to `agdpmod=vit9696` breaks USB-C external display. The earlier "functionally equivalent on MacBookPro16,2" claim from entries #15 / #19 was correct only under pre-pipe=1 conditions where the framebuffer rejected the connector regardless of AGDP. **Do not revert to `=vit9696` without re-testing external display.**
 
 ### Available backups in ESP
 - `/Volumes/ESP/EFI/OC/config-pre-agdpmod-ignore.plist.bak` — pre-agdpmod swap (2026-05-06; has stolenmem 38 / fbmem 19, enable-lspcon-support, hda-gfx, agdpmod=vit9696).
@@ -766,6 +766,32 @@ sudo log config --mode "level:debug" --process kernel  # enable debug logs
     User has 2 of 3 external paths working — both USB-C ports interchangeable for a USB-C hub or USB-C-to-HDMI dongle. HDMI port is a hardware limitation, not solvable in software.
 
     **Possible future test (optional, low priority):** `framebuffer-con1-type = HDMI (0x800)` to ask the framebuffer to drive native HDMI TMDS. WEG's HDMI conversion is documented broken on Ice Lake ([acidanthera/bugtracker #1616](https://github.com/acidanthera/bugtracker/issues/1616)), but worth one empirical test in 2026 with current WEG. Don't expect success.
+
+---
+
+28. **2026-05-07 — `agdpmod=ignore` IS load-bearing for external display: empirical correction to entries #15 / #19.**
+
+    **Context.** While reverting hibernate-irrelevant changes to retest hibernate-25 (separate workstream, see `S3-sleep-debug-2026-05-07.md`), boot-args were temporarily flipped back to `agdpmod=vit9696` (the pre-2026-05-06 value). All other entry #26 fix components (`framebuffer-conN-pipe=1`, busid mapping, type=DP) were preserved.
+
+    **Observation.** USB-C external display (con3, front port, Dell P2722H) **failed to light up** under `agdpmod=vit9696` despite the pipe=1 fix being in place. Reverting the single boot-arg back to `agdpmod=ignore` restored external display.
+
+    **Falsified claim.** Entries #15 and #19 concluded "`vit9696` and `ignore` are functionally equivalent on MacBookPro16,2 SMBIOS" because that board-id is natively accepted by AGDP without patches. That conclusion was correct under the conditions tested at the time, but **only because the framebuffer was rejecting the connector at the port-type-allow-list layer (pre-pipe=1)**, masking any difference at the AGDP layer. Under those pre-fix conditions, both `vit9696` and `ignore` produced equivalent external-display failure (just via different log signatures, as entry #19 noted).
+
+    **Refined mental model.** Two independent rejection layers stack in series for external display on this hardware:
+
+    1. **Framebuffer port-type allow-list** (`AppleIntelICLLPGraphicsFramebuffer.kext`) — entry #26 fix bypasses this by setting `framebuffer-conN-pipe=1`.
+    2. **AGDP policy** (`AppleGraphicsDevicePolicy.kext`) — bypassed by `agdpmod=ignore`. Under `agdpmod=vit9696`, AGDP gets patched (board-id table modified) but apparently still rejects something on the connector path for this combo (ICL + MacBookPro16,2 SMBIOS + external DP-via-DDI). Under `agdpmod=ignore`, AGDP is bypassed entirely — `ignore` mode does NOT mean "no-op," it means "skip applying any AGDP patches and let WEG bypass the AGDP enforcement code paths." That bypass is what's load-bearing.
+
+    Pre-2026-05-06 testing only saw layer 1 fail, so layer 2 differences were invisible. With layer 1 fixed, layer 2 now matters.
+
+    **Action.**
+    - Boot-args remain `agdpmod=ignore`. Do not revert.
+    - Line 112 ("Boot-args (live)" notes section) updated: removed the "functionally equivalent" claim and replaced it with a load-bearing warning + back-reference to this entry.
+    - Memory entry `project_hackintosh_external_display_fix.md` updated with the same correction.
+
+    **Open question (low priority).** Whether the AGDP layer-2 rejection under `vit9696` is specifically tied to ICL framebuffer interaction, the new pipe=1 connector path, or something more general. Not worth investigating unless we change SMBIOS or upgrade to a future macOS that changes AGDP semantics. Current state is working; leave alone.
+
+    **Lesson.** When two independent rejection layers exist, fixing one doesn't reveal the other's behavior until the first is in place. Earlier conclusions reached "no difference between A and B" should be re-tested whenever a precondition changes — in this case, the pipe=1 fix changed the precondition.
 
 ---
 

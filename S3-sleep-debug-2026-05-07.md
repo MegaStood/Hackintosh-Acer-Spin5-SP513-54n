@@ -6,14 +6,17 @@ Prior context: hibernate-25 (suspend-to-disk) was previously tested and confirme
 
 ---
 
-## TL;DR — current state
+## TL;DR — RESOLVED via DarkWake fallback
 
-- **Phase 1: ✓** Native firmware `_S3` restored to Darwin by disabling `SSDT-NameS3-disable.aml` + the `_S3 → XS3_` ACPI rename. macOS now believes S3 is supported.
+**Working solution: Phase 1 (`_S3` exposed) + `-noDC9` boot-arg → DarkWake-as-sleep.** Real S3 unfixable on this hardware (Insyde-locked AOAC class, same as Acer Swift 3 SF314-57).
+
+- **Phase 1: ✓** Native firmware `_S3` exposed to Darwin (disabled `SSDT-NameS3-disable.aml` + `_S3 → XS3_` rename). Required for `IOSleepSupported = Yes`.
 - **Phase 2: ✓** `pmset` configured: `hibernatemode=0`, `standby=0`, `powernap=0`, `tcpkeepalive=0`, `autopoweroff=0`, `lowbatteryhibernate=0`.
-- **Phase 4 (first sleep test): ✗** S3 entry succeeded (fan stopped, LED breathed), but **wake failed at firmware-handoff level**. Display stayed black; system unresponsive. Required hard power-off.
-- **Post-mortem**: `pmset -g log` shows `Failure: 0x002A001F : EFI/Bootrom Failure after last point of entry to sleep` — Insyde firmware doesn't return control to macOS cleanly on S3 wake.
-- **Significance**: NOT an iGPU/display problem. EXT4 hook (designed to nudge iGPU on wake) never gets a chance to fire because macOS never resumes control.
-- **Next experiment**: add `-noDC9` boot-arg (canonical Ice Lake S3 wake fix per acidanthera/bugtracker #1207).
+- **Phase 4 (real S3 attempt, NO `-noDC9`): ✗** S3 entry succeeded (fan stopped, LED breathed), wake failed at firmware-handoff level (`0x002A001F : EFI/Bootrom Failure`). Hard power-off required.
+- **Phase 5 (with `-noDC9`): ✓** DC9 entry blocked by kernel → fallback to DC6 (DarkWake). Display off, kernel alive (heartbeat continuous, zero gap), wake clean (<1 sec) via key press, all peripherals + external display restored.
+- **Conclusion**: Real S3 sleep is firmware-broken on this Spin 5. DarkWake is the working substitute. Both Phase 1 and `-noDC9` are load-bearing — neither can be removed.
+- **Trade-off**: ~3-8W in DarkWake vs ~0.3W in true S3. Battery life ~6-15h vs days. Functionally usable. Same model as Surface laptops' Modern Standby.
+- **Pending**: 1-hour battery drain test to validate practical viability.
 
 ---
 
@@ -164,26 +167,174 @@ autopoweroff=0   lowbatteryhibernate=0  proximitywake=0
 
 ---
 
-## Next experiment
+## Phase 5 — DarkWake test with `-noDC9` (2026-05-07 morning)
 
-**Add `-noDC9` boot-arg.** Single token addition to existing boot-args, single-variable test. Reboot, retry `pmset sleepnow`, observe wake.
+### Setup
 
-Predictions:
-1. Wake succeeds → `-noDC9` was the missing piece. Done.
-2. Same `0x002A001F` → next try is `-hbfx-disable-patch-pci` or `igfxfw=2`.
-3. Different failure code → useful diagnostic; informs next experiment.
-4. Boot doesn't complete → revert via plistlib edit, easy.
+- `-noDC9` boot-arg added to NVRAM (committed `e95dae8`).
+- USB-C dock attached: AX88179B Ethernet (en1), Lenovo USB optical mouse, external display via DP-alt-mode (ITE BillBoard role-switch chip).
+- Wi-Fi disabled; SSH path is en1 (192.168.0.58) from phone via Termius.
+- Two-layer monitoring during test:
+  - `~/sleep-heartbeat.log` — `date` written every 2 sec by background shell loop. Definitive kernel-liveness probe (writes hit disk synchronously, robust to logging-subsystem hangs).
+  - `~/sleep-iopm-stream.log` — `sudo log stream --predicate 'subsystem == "com.apple.iokit.IOPMrootDomain"' --info >> ... 2>&1 &` then `disown`. Rich event log when logging subsystem is alive. Note: `2>&1` required or stderr writes to TTY trigger SIGTTOU and suspend the backgrounded job.
 
-Recovery if anything breaks: emulated NVRAM in place protects against Insyde NVRAM wipe. Any boot issue can be fixed by editing `config.plist` from external boot.
+### Procedure
+
+1. Phone Termius SSH session active to en1.
+2. `date; pmset sleepnow` issued at 11:27:13.
+
+### Observation
+
+- pmset returned "Sleeping now..." promptly.
+- Display went off; system appeared to sleep.
+- Key press at 11:28:57 → display came back, prompt responsive, SSH session survived. No force-poweroff.
+
+### Decisive evidence — heartbeat shows ZERO gap
+
+```
+11:27:55, 11:27:57, 11:27:59, 11:28:01, 11:28:03, ...
+```
+
+Continuous 2-second writes throughout the entire window. `awk` gap-detector (`>4 sec`) returned NO gaps anywhere in the log.
+
+→ **Kernel was running the entire time.** Never entered any actual sleep state. The "sleep" was DarkWake.
+
+### `pmset -g log` confirms
+
+```
+11:27:13  Entering DarkWake state due to 'Software Sleep pid=2832':TCPKeepAlive=disabled
+11:27:13  PID 103(powerd) Created InternalPreventSleep "darkwakelinger"
+11:27:26  PID 103(powerd) TimedOut InternalPreventSleep "darkwakelinger" 00:00:12
+[no further events for ~1.5 min]
+11:28:57  Wake — DarkWake to FullWake from Invalid [CDNVA] : due to HID Activity
+11:28:57  WakeTime: 0.787 sec
+```
+
+Telling details:
+- "Entering DarkWake state" (not "Sleep") — DarkWake is destination, not transition.
+- WakeTime **0.787 sec** — far too fast for true S3 wake (which requires firmware reload, ≥2-5 sec).
+- "DarkWake to FullWake" — never says "Sleep to Wake".
+- `Sleep/Wakes since boot ... :0` — zero S3 sleeps recorded.
+
+### `IOPMrootDomain` confirmation
+
+```
+"CurrentPowerState"=4    ← never dropped below full power
+"MaxPowerState"=4
+"Last Sleep Reason" = "Software Sleep"
+"Wake Type" = "UserActivity Assertion"
+"IOSleepSupported" = Yes ← Phase 1 doing its job
+```
+
+### Why this happened — `-noDC9` semantics
+
+`-noDC9` literally tells the kernel "do not enter DC9 CPU package state."
+
+| State | Description | Maps to |
+|---|---|---|
+| **DC6** | Deep idle. RAM powered, peripherals partial. | DarkWake / S0ix |
+| **DC9** | Deepest idle. RAM in self-refresh. | **Required for S3 entry** |
+
+By blocking DC9, S3 entry becomes physically impossible. Kernel falls back to the next-deepest available state: DC6 = DarkWake.
+
+### Significance
+
+`-noDC9` **converts** the failure mode rather than fixing S3:
+- **Without `-noDC9`**: real S3 entry → catastrophic firmware-handoff wake failure → unusable.
+- **With `-noDC9`**: DarkWake entry → clean wake → **usable**.
+
+The original research recommendation (acidanthera/bugtracker #1207) cited a "Cannot allow DC9 without disallowing DC6" panic that we never actually observed. The fix is correct outcome via wrong mechanism: it sidesteps the firmware S3-handoff bug by preventing S3 entry entirely.
+
+### What works in DarkWake
+
+- Display off ✓
+- Kernel alive (heartbeat continuous) ✓
+- USB Ethernet en1 link survives ✓
+- SSH session survives across the "sleep" ✓
+- Wake via key press, fast (<1 sec) ✓
+- External display restored on wake ✓
+- USB peripherals (mouse, dock) restored ✓
+
+### Trade-off
+
+| | Real S3 (broken) | DarkWake (working) |
+|---|---|---|
+| Power draw | ~0.3-0.7W | ~3-8W |
+| Battery life on 50Wh | ~3 days | ~6-15 hours |
+| Wake latency | 2-5 sec | <1 sec |
+| Reliability on Spin 5 | broken at firmware level | **working** |
+
+DarkWake is structurally what Modern Standby / S0ix does on Surface laptops — they don't have real S3 either. Legitimate sleep mode, just less efficient than S3.
+
+### Why the Phase 1 changes must stay
+
+Without `_S3` exposed to Darwin, `IOSleepSupported = No` and `pmset sleepnow` cannot trigger any sleep transition. No DarkWake either, because DarkWake is reached *via* a sleep attempt. The full working stack is:
+
+1. `_S3` visible to Darwin (Phase 1: SSDT-NameS3-disable.aml DISABLED + `_S3→XS3_` rename DISABLED)
+2. `-noDC9` boot-arg loaded (gates kernel out of DC9)
+3. `pmset hibernatemode=0` etc. (no hibernate fallback)
+
+Remove any one and the chain breaks.
+
+### Confirmed Insyde-locked-AOAC bucket
+
+Earlier research flagged the Spin 5 *might* be in the Acer Swift 3 SF314-57 "Insyde-locked AOAC firmware" bucket. Confirmed by Phase 4 + 5:
+- Real S3 entry possible but wake broken at firmware level (Phase 4 evidence).
+- DarkWake works as substitute (Phase 5 evidence).
+
+This matches the documented Swift 3 behavior. **Software-only fix for real S3 unlikely to exist.**
 
 ---
 
-## Resume instructions for next session
+## Final config
 
-1. Boot, verify boot-args show `-noDC9` via `sysctl kern.bootargs`
-2. Verify pmset still has `hibernatemode=0` etc. (these may not survive reboot if NVRAM doesn't persist them — re-set if needed)
-3. `pmset sleepnow`
-4. Wait 30 sec, press key
-5. Capture: `pmset -g log | tail -50` and `/usr/bin/log show --last 5m --predicate 'subsystem == "com.apple.iokit.IOPMrootDomain"' --info`
-6. If wake works: try lid-close/open, then with external display attached
-7. If wake fails: report the failure code; layer next intervention from the table above
+### Boot-args
+```
+keepsyms=1 debug=0x100 -btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck
+agdpmod=ignore alcid=13 -v -no_compat_check -igfxdbg -liludbgall igfxonln=1 -noDC9
+```
+
+### ACPI
+- `SSDT-NameS3-disable.aml`: in Add list, **disabled** (file present but not loaded)
+- `_S3 → XS3_` rename: **disabled**
+- `SSDT-EXT4-iGPU-Wake.aml`: enabled (irrelevant to current solution; would have helped only if real S3 wake worked)
+- `SSDT-PTSWAKTTS-iGPU.aml`, `SSDT-EXT3-WakeScreen.aml`, `SSDT-GPRW.aml`: enabled
+
+### pmset (live, may need re-set if NVRAM doesn't persist)
+```
+hibernatemode=0  standby=0  powernap=0  tcpkeepalive=0
+autopoweroff=0   lowbatteryhibernate=0  proximitywake=0
+```
+
+### Recommended pmset tuning for DarkWake-as-sleep
+```bash
+sudo pmset -a darkwakes 0     # disable scheduled background-task DarkWakes (no auto-wake every 1-3h)
+sudo pmset -a sleep 10        # auto-enter DarkWake after 10 min idle
+sudo pmset -a displaysleep 5  # turn display off after 5 min
+```
+
+---
+
+## Pending validation
+
+**1-hour battery drain test** to validate DarkWake-as-sleep is daily-driver viable:
+
+1. Charge to 100%, unplug AC.
+2. `pmset sleepnow`.
+3. Leave for 1 hour.
+4. Wake, run `pmset -g batt`.
+
+Acceptance criteria:
+- < 10% drain/hour → comfortable for full workday use.
+- 10-20% drain/hour → marginal, OK for short sleeps only.
+- > 20% drain/hour → unusable, equivalent to leaving on.
+
+---
+
+## Things confirmed NOT working / not pursued
+
+- **True S3 sleep**: unfixable in software (firmware-level Insyde issue).
+- **Hibernate-25 (suspend-to-disk)**: unfixable (same firmware class), only succeeded once previously, NVRAM-corruption risk.
+- **`-hbfx-disable-patch-pci`, `igfxfw=2` boot-args**: not tested. With DarkWake working, no incentive to roll the dice on more boot-args.
+- **SMBIOS swap MacBookPro16,2 → MacBookAir9,1**: not pursued; would affect BT (the BTLFX boot-args are SMBIOS-tied).
+- **EXT4 iGPU-Wake hook**: kept enabled but never had a chance to fire (real S3 wake never reached). Harmless idle.

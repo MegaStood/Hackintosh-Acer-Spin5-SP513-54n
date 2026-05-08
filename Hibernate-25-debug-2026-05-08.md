@@ -6,19 +6,59 @@ Prior context: hibernate-25 has only succeeded **twice ever** on this machine �
 
 ---
 
-## TL;DR — three pmset knobs are load-bearing
+## TL;DR (final, 2026-05-08 23:00) — NVRAM emulation was the silent killer
 
-For hibernate-25 to actually fire, **all three** must be set this way before sleep:
+The pmset knobs are NOT the load-bearing variable. **The 2026-05-02 successes ran with `standby=1` + `tcpkeepalive=1` + `hibernatemode=25`** (jlempen's defaults / `pmset restoredefaults`). Today's failures with both `standby=0` recipes also failed — kernel kept recording `hibmode=0` regardless of pmset state. The pmset-only theory is wrong.
 
-```bash
-sudo pmset -a hibernatemode 25     # config full hibernate
-sudo pmset -a standby       0     # disable Standby framework — no S3 first
-sudo pmset -a tcpkeepalive  0     # no DarkWake hold preventing power-off
+The actual delta between May-2 success and today's failures is in **OpenCore configuration**:
+
+| Layer | May-2 success | Today's failures |
+|---|---|---|
+| `OpenVariableRuntimeDxe.efi` | NOT loaded → real firmware NVRAM | Loaded → emulated NVRAM |
+| `NVRAM:LegacyOverwrite` | (not wiping firmware Boot vars) | true → wipes Boot vars |
+| `HibernationFixup.kext` | Enabled | Disabled (re-enabled late evening) |
+| Working `boot-image` NVRAM | Persists across hibernate | Lost across hibernate |
+
+**Why emulated NVRAM breaks hibernate-25:** `boot.efi` writes the `boot-image` NVRAM variable *during the hibernate dump* — that's the device-path pointer OpenCore reads on the next boot to find the sleepimage. With OC's emulated NVRAM, all writes are RAM-resident; the `org.acidanthera.nvramhook.daemon` LaunchDaemon is what flushes them to `nvram.plist` on shutdown. But hibernate-25 isn't a shutdown — userspace gets `SIGSTOP`-frozen, kernel writes the image, power drops to S5. `launchd` never fires the shutdown notification, the daemon never runs, `boot-image` is never persisted. Next boot: emulated NVRAM is empty, OC sees `boot-image is 0 bytes - Not Found`, falls back to cold boot.
+
+This is an **architectural limitation of userspace-mediated NVRAM persistence**, not a bug in the daemon code. Userspace cannot catch hibernate-power-off because by the time the kernel commits the dump, all userspace is frozen.
+
+### Working stack (mirrors May-2)
+
+```
+OpenVariableRuntimeDxe.efi  → Enabled = false   (drop emulated NVRAM)
+OpenRuntime.efi             → Enabled = true    (keep — needed for OC runtime)
+NVRAM:LegacyOverwrite       → false             (don't wipe firmware Boot vars)
+Kernel:Add HibernationFixup → Enabled = true    (prevents mode 25→0 downgrade)
+Misc:Boot:HibernateMode     = NVRAM
+Booter:Quirks:DiscardHibernateMap = true
+UEFI:ReservedMemory entry: Address 569344, Size 4096, Type RuntimeCode
 ```
 
-Missing any one silently downgrades the sleep to S3, hits the firmware S3 wake bug (`0x002a001f`), and ends in cold-reboot recovery. Most past failures were `standby=1` overriding `hibernatemode=25` to mean "S3 first, transition to hibernate after `standbydelay=10800` sec" — but the firmware S3 wake bug kills any wake-from-S3, including the kernel's internal "wake briefly to write sleepimage" step at standby transition.
+```bash
+sudo pmset restoredefaults     # standby=1, tcpkeepalive=1, etc — defaults are right
+sudo pmset -a hibernatemode 25
+```
 
-**Status as of 2026-05-08 14:30**: config is finally clean (above 3 settings + 8 GB sleepimage pre-allocated). End-to-end hibernate-25 test still pending.
+The launchd hook (`org.acidanthera.nvramhook.{daemon,agent}.plist`) becomes vestigial once emulated NVRAM is off — harmless, can be uninstalled later for cleanliness; does not block hibernate.
+
+### Status as of 2026-05-08 23:00
+
+Config edited to match the working stack above; ESP mounted, plist lints OK, `OpenVariableRuntimeDxe.efi=false` and `LegacyOverwrite=false` confirmed. **One more reboot + battery sleep cycle pending** to verify the May-2 stack reproduces a real S4 resume (`rd=NN ms` in `pmset -g log`, `boot-image is N bytes - Success` in OC log).
+
+---
+
+## Earlier TL;DR — FALSIFIED 2026-05-08 evening
+
+The mid-day TL;DR recommended `standby=0` + `tcpkeepalive=1` + `hibernatemode=25`. Sleep tests at 16:09→16:41 and 20:22→20:58 with that exact config both failed identically — `pmset` log recorded `hibmode=0 standbydelaylow=0 standbydelayhigh=0` and `Failure: 0x002A001F`. Cold-boot OC log showed `boot-image is 0 bytes - Not Found`. The pmset knobs were never the load-bearing variable. Kept here as audit trail; superseded by the NVRAM-emulation finding above.
+
+```bash
+# DO NOT USE (falsified)
+sudo pmset -a hibernatemode 25
+sudo pmset -a standby       0
+```
+
+`standby=0` is not harmful, but it's not the fix either. May-2 successes ran with `standby=1` (verified from HibernateStats lines: `standbydelaylow=10800 standbydelayhigh=86400`).
 
 ---
 
@@ -117,11 +157,13 @@ But on this hardware **every wake-from-S3 fails at firmware** (`0x002a001f`), in
 
 **Fix: `pmset -a standby 0`** — bypasses the Standby framework, sleep goes straight to "write dump, power off" without ever touching S3.
 
-### 2. `TCPKeepAlive = 1` holds the kernel awake
+### 2. ~~`TCPKeepAlive = 1` holds the kernel awake~~ — **FALSIFIED 2026-05-08**
 
-With TCP-keep-alive on, the kernel maintains DarkWake to keep network sockets alive. Hibernate is incompatible with this — full power-off can't keep TCP sessions. Kernel falls back to S3 even when mode=25 is set.
+Earlier hypothesis: TCPKeepAlive forces DarkWake, blocking hibernate-25 even when configured. **This is wrong on Spin 5.**
 
-**Fix: `pmset -a tcpkeepalive 0`** — releases the DarkWake hold.
+`tcpkeepalive=1` is what *protects* AC sleep by keeping it in DarkWake (DC6, kernel alive, ~3-8 W) — the working AC-sleep state documented in `S3-sleep-debug-2026-05-07.md`. Setting it to 0 drops AC idle sleep into real S3 (DC9, kernel suspended) and hits the firmware `0x002a001f` wake bug. **Keep `tcpkeepalive=1`.**
+
+The hibernate-25 path is **not** reached by tweaking TCPKeepAlive on AC — idle sleep on AC at 100% charge will always go to DarkWake by Apple's policy, regardless of `hibernatemode`. Hibernate-25 is reached by explicit `pmset sleepnow` on **battery**, where DarkWakeBackgroundTasks=No takes the DarkWake-hold off the table.
 
 ### 3. `pmset` prefs file `rm` ordering trap
 
@@ -131,7 +173,7 @@ If the user runs `pmset -a hibernatemode 25` and **then** `rm /Library/Preferenc
 
 **Rule: any `rm` of the prefs files must come BEFORE the final `pmset -a hibernatemode 25`, not after.** Got bitten by this twice in this session (2026-05-07 23:57 cycle and 2026-05-08 00:09 cycle).
 
-### Correct sequence
+### Correct sequence (corrected 2026-05-08 15:40)
 
 ```bash
 sudo pkill -9 caffeinate 2>/dev/null
@@ -140,11 +182,101 @@ sudo rm -f /var/vm/sleepimage
 sudo pmset hibernatefile /var/vm/sleepimage
 sudo pmset -a hibernatemode 25
 sudo pmset -a standby       0     # the missing piece for years
-sudo pmset -a tcpkeepalive  0     # the other missing piece
+# DO NOT set tcpkeepalive=0 — it breaks AC DarkWake (see Falsification)
 pmset -g | grep -E "hibernatemode|hibernatefile|standby|tcpkeep"
-# expect: hibernatemode 25, standby 0, tcpkeepalive 0
+# expect: hibernatemode 25, standby 0, tcpkeepalive 1
+# Then unplug AC (idle sleep on AC always DarkWakes — never hibernates)
 sudo pmset sleepnow
 ```
+
+---
+
+## Falsification — `tcpkeepalive=0` advice was WRONG (2026-05-08 15:16)
+
+After committing the original 3-knob recipe earlier today, I applied the config (`standby=0`, `tcpkeepalive=0`, `hibernatemode=25`) and observed:
+
+- **15:16:01** — idle sleep entered. pmset log: `'Idle Sleep':TCPKeepAlive=disabled Using AC (Charge:100%)`. So `tcpkeepalive=0` *did* take effect — kernel did not hold DarkWake.
+- **15:32:30** — cold-recovery boot (uptime resets). User had to power-cycle.
+- **15:32:46** — pmset log: `Failure during sleep: 0x002A001F : EFI/Bootrom Failure after last point of entry to sleep`. **Same firmware S3 wake bug as Phase 4/6.**
+- HibernateStats for the cycle: `hibmode=0 standbydelaylow=0 standbydelayhigh=0  0` — empty `rd=`, no sleepimage written.
+
+**Mechanism:**
+- With `tcpkeepalive=1`: AC idle sleep is held in DarkWake (kernel alive, safe wake). Working state.
+- With `tcpkeepalive=0`: no DarkWake hold → AC idle sleep falls through to real S3 → firmware wake bug → cold reboot.
+- The hibernate-25 path was **never reached**, because idle sleep on AC at 100% charge does not trigger hibernate at all. The kernel chooses DarkWake by Apple's policy, regardless of `hibernatemode`.
+
+**Lesson:** `tcpkeepalive` is not a hibernate-25 enabler — it's a DarkWake-stability lever. Setting it to 0 on Spin 5 *worsens* AC sleep (drops a documented-working DarkWake state into the broken-S3 path) without doing anything for hibernate. Hibernate-25 testing requires explicit `pmset sleepnow` on **battery**, with `tcpkeepalive` left at default 1 and `standby=0`.
+
+The TL;DR and "Correct sequence" sections above have been corrected.
+
+---
+
+## The actual smoking gun — NVRAM emulation (added 2026-05-08 23:00)
+
+Side-by-side OC boot log comparison:
+
+```
+May-2 23:58 (rd=86 ms — known-good resume):
+  00:036  OCVAR: Locate emulated NVRAM protocol - Not Found    ← real firmware NVRAM
+  01:549  OCB: boot-image is 70 bytes - Success
+  01:551  OCB: NVRAM hibernation is 1 / Success / 44
+  01:554  OC: Hibernation activation - Success, hibernation wake - yes
+  01:576  OCB: Found BootNext 0082 of type 2
+
+May-8 22:35 (today's failure with full pmset/kext recipe in place):
+  02:539  OC: Translated HibernateMode NVRAM to 2
+  02:543  OCB: boot-image is 0 bytes - Not Found
+  02:546  OCB: NVRAM hibernation is 0 / Not Found / 0
+  02:550  OC: Hibernation activation - Not Found, hibernation wake - no
+  02:596  OCB: BootOrder/BootNext are not present or unsupported 0 0
+```
+
+Same code path, same boot args, same SMBIOS. The only difference: May-2 used real firmware NVRAM; May-8 had emulated NVRAM loaded. The `OCVAR: Locate emulated NVRAM protocol - Not Found` line on May-2 is the canary — when present, OC reads/writes the firmware's actual NVRAM, which survives S5/hibernate naturally. When absent (i.e. emulated NVRAM driver is loaded), all writes go through OC's RAM-resident store, and the launchd persistence path fails to capture hibernate-time writes.
+
+### Why the launchd daemon doesn't help
+
+`/var/log/org.acidanthera.nvramhook.launchd/launchd.log` shows the daemon's actual lifecycle:
+- At each boot: daemon starts, mounts ESP, "touches" `nvram.plist` (mtime stamp), unmounts, waits.
+- On shutdown signal: daemon mounts ESP, dumps current NVRAM state to `nvram.plist`, unmounts.
+- During hibernate: **no log activity at all.** Between the previous boot's "Running…" line and the next boot's "Daemon Starting", the entire sleep-and-failed-wake cycle produced zero daemon entries.
+
+This isn't broken code — it's the design. `launchd` sends `SIGTERM` on graceful shutdown (`shutdown -h now`, halt). Hibernate-25 freezes userspace via `SIGSTOP` and the kernel handles the dump directly; no `SIGTERM`, no daemon flush. A fix would require hooking IOPMrootDomain's *will-sleep* notification (which fires before processes freeze), but that's an upstream feature request, not a config change.
+
+### Other secondary fallout from emulated NVRAM
+
+- `boot-image` is in Apple's `7C436110-AB2A-4BBB-A880-FE41995C9F82` GUID. With `LegacySchema` not covering it, OC's emulated store doesn't even attempt to persist it on shutdown — and even if it did, the daemon-doesn't-fire-on-hibernate problem above would still kill it.
+- `BootOrder` / `BootNext` (which `boot.efi` *also* sets during hibernate) live in `8BE4DF61-93CA-11D2-AA0D-00E098032B8C`. With `LegacyOverwrite=true`, OC actively wipes any firmware Boot vars not in `nvram.plist` on every boot — so even if the daemon *had* persisted them, OC would clear them on the next boot. (`LegacyOverwrite=false` fixes this half independently.)
+
+### Reverting cleanly
+
+```
+UEFI:Drivers:OpenVariableRuntimeDxe.efi  Enabled = false
+NVRAM:LegacyOverwrite                    false
+# Keep OpenRuntime.efi enabled — required for OC runtime services, independent of NVRAM emulation.
+```
+
+Validation (post-edit, before reboot):
+```
+plutil -lint /Volumes/ESP/EFI/OC/config.plist
+# expect: OK
+
+PlistBuddy -c 'Print :UEFI:Drivers' /Volumes/ESP/EFI/OC/config.plist | grep -E "Path|Enabled"
+# expect: OpenVariableRuntimeDxe.efi  Enabled = false
+#         OpenRuntime.efi             Enabled = true
+
+PlistBuddy -c 'Print :NVRAM:LegacyOverwrite' /Volumes/ESP/EFI/OC/config.plist
+# expect: false
+```
+
+Validation (post-reboot, in new OC log):
+```
+grep -a 'OCVAR: Locate emulated NVRAM' /Volumes/ESP/opencore-*.txt | tail -1
+# expect: Locate emulated NVRAM protocol - Not Found
+```
+
+The launchd plists can stay where they are; once emulated NVRAM is off they're inert. Removing them is a 5-line cleanup task with `launchctl bootout` + `rm` of `/Library/LaunchDaemons/org.acidanthera.nvramhook.*` — defer if you want.
+
+**DO NOT remove the launchd hook while emulated NVRAM is still on.** That combination is strictly worse than current state — it leaves OC with an emulated store that nobody persists, so every reboot wipes everything.
 
 ---
 
@@ -189,11 +321,13 @@ Returns "iokit/common: data was not found" if the variable is absent — useful 
 
 ## Outstanding questions
 
-1. **End-to-end hibernate-25 test on the corrected config** — pending. With `standby=0` + `tcpkeepalive=0` + `hibernatemode=25`, does the dump finalize? Does resume work? Does the firmware survive the post-resume NVRAM state?
+1. **End-to-end verification of the May-2-stack revert** — pending. With `OpenVariableRuntimeDxe.efi=false` + `LegacyOverwrite=false` + `HibernationFixup=true` + jlempen's pmset defaults (standby=1, tcpkeepalive=1, hibernatemode=25), does the next sleep cycle produce `boot-image is N bytes - Success` in the OC log and `rd=NN ms` in `pmset -g log`? If yes, hibernate-25 is closed.
 
 2. **Power-button LED state on this hardware** — unconfirmed. Convention: pulsing/breathing white = S3, fully off = S4 / power-off. Worth observing during the next hibernate-25 test to add an external verification signal.
 
-3. **Whether the BootOrder-wipe is hibernate-related at all**, vs. the LegacyOverwrite-emulation artifact above. Once we've run hibernate-25 successfully without LegacyOverwrite, we'll know.
+3. **Whether the BootOrder-wipe issue resolves automatically once emulated NVRAM is off.** If firmware-NVRAM `BootOrder` survives across reboots/hibernates with the new config, the original "macOS hibernate corrupts NVRAM" theory that motivated emulated NVRAM in the first place is fully falsified.
+
+4. **launchd hook cleanup** — optional, deferred. Vestigial once emulated NVRAM is off. Uninstall sequence documented in "Reverting cleanly" above.
 
 ---
 

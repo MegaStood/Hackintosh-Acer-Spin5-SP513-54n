@@ -103,6 +103,72 @@ sudo pmset -a standby       0
 
 ---
 
+## Side-by-side log comparison tables (added 2026-05-09 00:30)
+
+Two pairwise log comparisons isolate the regressions cleanly. Both tables share most of the same `OC:` initialization phase since OC's early-init flow is identical for cold-boot and resume — divergence only happens at the hibernate-detection step.
+
+### Table 1 — Cold-boot vs cold-boot (May-2 14:51 vs May-8 22:35)
+
+Controls for "what was the long-running config" delta. Both boots are pre-hibernate, no resume artifacts.
+
+| Check | May-2 14:51 (`145105`) | May-8 22:35 (`143529`) |
+|---|---|---|
+| Boot type | Cold boot | Cold boot |
+| Config size | 97,424 bytes | 101,072 bytes |
+| Driver count | **3** | **4** (+ `OpenVariableRuntimeDxe.efi`) |
+| NVRAM probe | `Locate emulated NVRAM protocol - Not Found` | `Found FW NVRAM, forcing redirect 1` |
+| NVRAM init | (no extra steps) | `Loading NVRAM from storage...` + `Restoring FW NVRAM...` |
+| NVRAM ops | `ignored, exists` (no-op, vars match) | `Deleting boot-args - Success` then `Setting - Success` (rewrite) |
+| ACPI patches applied | **0,1,2,3,6,7,9,10,11** (9 patches) | **0,1,2,3,6,7,9,10,11** (9 patches — IDENTICAL) |
+| `_PTS to ZPTS` (idx 4) | NOT applied | NOT applied |
+| `_WAK to ZWAK` (idx 5) | NOT applied | NOT applied |
+| `SSDT-PTSWAKTTS-iGPU.aml` | Skipped (disabled) | Skipped (disabled) |
+| `SSDT-EXT4-iGPU-Wake.aml` | Not in config (entry didn't exist on May-2) | Skipped (disabled) |
+| `boot-image` | 0 bytes - Not Found | 0 bytes - Not Found |
+
+**What this isolates:** the only meaningful long-running-config delta between May-2 morning and May-8 evening is the **NVRAM emulation** (rows for drivers, NVRAM probe, NVRAM init, NVRAM ops). The four ACPI items look identical in both — and both don't have them. So they were *not* part of May-2's baseline config.
+
+### Table 2 — Resume vs cold-boot (May-2 23:58 vs May-8 22:35)
+
+Compares the only known-good hibernate resume against the failure. Captures the *actual* working hibernate config.
+
+| Check | May-2 23:58 (`155856` — working resume) | May-8 22:35 (`143529` — failed → cold) |
+|---|---|---|
+| Boot type | Hibernate resume | Cold-boot recovery |
+| Config size | 97,421 bytes | 101,072 bytes |
+| Driver count | 3 | **4** (+ `OpenVariableRuntimeDxe.efi`) |
+| NVRAM probe | `Locate emulated NVRAM protocol - Not Found` | `Found FW NVRAM, forcing redirect 1` |
+| NVRAM init | (no extra steps) | `Loading NVRAM from storage...` + `Restoring FW NVRAM...` |
+| NVRAM ops on boot-args | `ignored, exists` (no-op) | `Deleting - Success` then `Setting - Success` (rewrite) |
+| ACPI patches applied | **0,1,2,3,4,5,6,7,9,10,11** (11 patches) | **0,1,2,3,6,7,9,10,11** (9 patches) |
+| `_PTS to ZPTS` (idx 4) | ✅ Applied | ❌ Missing |
+| `_WAK to ZWAK` (idx 5) | ✅ Applied | ❌ Missing |
+| `SSDT-PTSWAKTTS-iGPU.aml` | ✅ Loaded (no skip line) | ❌ Skipping add (disabled) |
+| `SSDT-EXT4-iGPU-Wake.aml` | (entry not in May-2 config) | ❌ Skipping add (disabled) |
+| `SSDT-NameS3-disable.aml` | Skipped (correctly — re-exposes _S3) | Skipped (same) |
+| `OCB: boot-image is N bytes` | **70 bytes - Success** | **0 bytes - Not Found** |
+| `OCB: NVRAM hibernation is` | **1 / Success / 44** | **0 / Not Found / 0** |
+| `OC: Hibernation activation` | **Success, hibernation wake - yes** | **Not Found, hibernation wake - no** |
+| `#[EB\|H:IS]` (boot.efi flag) | **1** (is hibernation) | **0** (not hibernation) |
+| boot.efi RT.GV lookups | (succeed silently) | `Err(0xE) <- RT.GV boot-signature` + `boot-image-key` |
+| BootOrder/BootNext | `Found BootNext 0082` (Apple set it for resume) | `BootOrder/BootNext are not present or unsupported` |
+
+**What this isolates:** the May-2 resume log shows **both** the four ACPI items active AND no NVRAM emulation. May-8 has neither. The result rows (boot-image, hibernation activation, EB|H:IS, RT.GV lookups, BootOrder) all reflect the downstream effect — hibernate set up correctly on May-2, lost on May-8.
+
+### Reading the two tables together — the hidden timeline
+
+Combining: Table 1 says ACPI items were NOT in the long-running May-2 config. Table 2 says they WERE active during the May-2 evening hibernate. Conclusion: **the user enabled the four ACPI items between 14:51 and the 23:28 sleep**, then hibernate worked. They got disabled again at some later point and weren't re-enabled before the May-8 attempts.
+
+This is actually stronger evidence for those four ACPI items being load-bearing than a static "May-2 always had them" claim would be — it's a deliberate intervention with a measured outcome.
+
+The two regressions stack independently:
+- **Regression A (ACPI):** four coupled items (`_PTS to ZPTS`, `_WAK to ZWAK`, `SSDT-PTSWAKTTS-iGPU.aml`, `SSDT-EXT4-iGPU-Wake.aml`) — needed for clean sleep-entry/wake handoff
+- **Regression B (NVRAM):** emulated NVRAM driver loaded — loses `boot-image` across hibernate power-off
+
+Both must be reverted for the May-2 working stack to reproduce.
+
+---
+
 ## The "instantly back to Windows" mystery — debunked
 
 Symptom: after a failed sleep, power-on lands on the Windows login screen "instantly". Looked uncannily like hibernation crossing OS boundaries.

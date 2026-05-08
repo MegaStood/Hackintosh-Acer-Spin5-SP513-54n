@@ -6,45 +6,86 @@ Prior context: hibernate-25 has only succeeded **twice ever** on this machine �
 
 ---
 
-## TL;DR (final, 2026-05-08 23:00) — NVRAM emulation was the silent killer
+## TL;DR (corrected 2026-05-08 23:30) — TWO coupled regressions, not one
 
-The pmset knobs are NOT the load-bearing variable. **The 2026-05-02 successes ran with `standby=1` + `tcpkeepalive=1` + `hibernatemode=25`** (jlempen's defaults / `pmset restoredefaults`). Today's failures with both `standby=0` recipes also failed — kernel kept recording `hibmode=0` regardless of pmset state. The pmset-only theory is wrong.
+A line-by-line side-by-side of `opencore-2026-05-02-155856.txt` (working resume) vs `opencore-2026-05-08-143529.txt` (failed cold-boot) revealed **two** independent load-bearing differences. The earlier "NVRAM emulation is the smoking gun" framing in commit `b92040a` was incomplete.
 
-The actual delta between May-2 success and today's failures is in **OpenCore configuration**:
-
-| Layer | May-2 success | Today's failures |
+| Layer | May-2 success | 2026-05-08 failures |
 |---|---|---|
-| `OpenVariableRuntimeDxe.efi` | NOT loaded → real firmware NVRAM | Loaded → emulated NVRAM |
-| `NVRAM:LegacyOverwrite` | (not wiping firmware Boot vars) | true → wipes Boot vars |
-| `HibernationFixup.kext` | Enabled | Disabled (re-enabled late evening) |
+| **A. ACPI patches** `_PTS to ZPTS` (idx 4), `_WAK to ZWAK` (idx 5) | Enabled, applied | **Removed** — log skips from idx 3 to idx 6 |
+| **A. ACPI SSDTs** `SSDT-PTSWAKTTS-iGPU.aml`, `SSDT-EXT4-iGPU-Wake.aml` | Loaded | **Disabled** — explicit `Skipping add ACPI ...` lines |
+| **B. UEFI driver** `OpenVariableRuntimeDxe.efi` | NOT loaded → real firmware NVRAM | Loaded → emulated NVRAM |
+| **B. NVRAM:LegacyOverwrite** | (no wiping) | `true` → wipes firmware Boot vars |
+| **B. HibernationFixup.kext** | Enabled | Disabled (re-enabled late 2026-05-08) |
 | Working `boot-image` NVRAM | Persists across hibernate | Lost across hibernate |
+| `OCAK` count (kext injection) | 0 (resume path skips) | 79 (cold-boot path) |
 
-**Why emulated NVRAM breaks hibernate-25:** `boot.efi` writes the `boot-image` NVRAM variable *during the hibernate dump* — that's the device-path pointer OpenCore reads on the next boot to find the sleepimage. With OC's emulated NVRAM, all writes are RAM-resident; the `org.acidanthera.nvramhook.daemon` LaunchDaemon is what flushes them to `nvram.plist` on shutdown. But hibernate-25 isn't a shutdown — userspace gets `SIGSTOP`-frozen, kernel writes the image, power drops to S5. `launchd` never fires the shutdown notification, the daemon never runs, `boot-image` is never persisted. Next boot: emulated NVRAM is empty, OC sees `boot-image is 0 bytes - Not Found`, falls back to cold boot.
+The two regressions are **independent and likely both required**:
 
-This is an **architectural limitation of userspace-mediated NVRAM persistence**, not a bug in the daemon code. Userspace cannot catch hibernate-power-off because by the time the kernel commits the dump, all userspace is frozen.
+### Regression A — coupled `_PTS/_WAK` rename + custom SSDT pair
 
-### Working stack (mirrors May-2)
+The patches rename Insyde's native `_PTS`/`_WAK` ACPI methods to `ZPTS`/`ZWAK`. The `SSDT-PTSWAKTTS-iGPU.aml` SSDT provides Hackintosh-friendly replacements for `_PTS`/`_WAK` that chain-call the renamed native methods. They're inseparable:
+
+- Without the rename: a custom-SSDT `_PTS`/`_WAK` collides with the native, OC drops one
+- Without the custom SSDT: the rename strips Insyde's native `_PTS`/`_WAK` from the namespace, leaving sleep entry/exit with no power-state handler
+
+The native Insyde `_PTS`/`_WAK` on this firmware are also where the `0x002A001F` EFI/BootROM fault originates (per `S3-sleep-debug-2026-05-07.md`). Stripping them via the rename, then *not* providing replacements, is the worst of both worlds: hibernate-25 has no clean power-state handoff at sleep entry → kernel falls back to mode 0 → S3 only → firmware bug at wake.
+
+`SSDT-EXT4-iGPU-Wake.aml` is a smaller iGPU wake-handler shim from the same family; pair it with the rest.
+
+### Regression B — emulated NVRAM (already documented above)
+
+`OpenVariableRuntimeDxe.efi` redirects all NVRAM I/O through OC's RAM-resident store. Hibernate-25 dumps RAM and powers off without firing `launchd`'s shutdown signal, so the `org.acidanthera.nvramhook.daemon` LaunchDaemon (the only mechanism that persists the emulated store to `nvram.plist`) **never runs during hibernate** — `boot-image` written by `boot.efi` lives only in volatile memory and dies with the power. Architectural limitation of userspace persistence, not a daemon bug. Both 2026-05-02 successes ran with this driver NOT loaded (real firmware NVRAM, `OCVAR: Locate emulated NVRAM protocol - Not Found`).
+
+Worse: with emulation active, every cold boot logs `OCVAR: Restoring FW NVRAM...` followed by `Deleting NVRAM ...:boot-args - Success` and re-creating the variable — the emulated store actively rewrites firmware NVRAM on each boot. Even if `boot-image` somehow survived to `nvram.plist`, it would be overwritten or absent on the restore pass.
+
+### Working stack (mirrors May-2 byte-for-byte where it matters)
 
 ```
-OpenVariableRuntimeDxe.efi  → Enabled = false   (drop emulated NVRAM)
-OpenRuntime.efi             → Enabled = true    (keep — needed for OC runtime)
-NVRAM:LegacyOverwrite       → false             (don't wipe firmware Boot vars)
-Kernel:Add HibernationFixup → Enabled = true    (prevents mode 25→0 downgrade)
-Misc:Boot:HibernateMode     = NVRAM
-Booter:Quirks:DiscardHibernateMap = true
-UEFI:ReservedMemory entry: Address 569344, Size 4096, Type RuntimeCode
+ACPI:
+  Patch (_PTS to ZPTS)             → Enabled = true     ← MUST be re-enabled
+  Patch (_WAK to ZWAK)             → Enabled = true     ← MUST be re-enabled
+  SSDT-PTSWAKTTS-iGPU.aml          → Enabled = true     ← MUST be re-enabled
+  SSDT-EXT4-iGPU-Wake.aml          → Enabled = true     ← MUST be re-enabled
+
+UEFI:
+  HfsPlus.efi                      → Enabled = true
+  OpenCanopy.efi                   → Enabled = true (May-2 had it loaded; current is false — re-enable if you want the picker UI, otherwise harmless either way for hibernate)
+  OpenVariableRuntimeDxe.efi       → Enabled = false    ← drop emulated NVRAM
+  OpenRuntime.efi                  → Enabled = true     ← keep (required by OC runtime, independent of emulation)
+
+NVRAM:
+  LegacyOverwrite                  → false              ← don't wipe firmware Boot vars
+
+Kernel:Add:
+  HibernationFixup.kext            → Enabled = true     ← prevents mode 25→0 downgrade
+
+Misc:Boot:
+  HibernateMode                    = NVRAM
+Booter:Quirks:
+  DiscardHibernateMap              = true
+UEFI:ReservedMemory:
+  Address=569344, Size=4096, Type=RuntimeCode
 ```
 
 ```bash
-sudo pmset restoredefaults     # standby=1, tcpkeepalive=1, etc — defaults are right
+sudo pmset restoredefaults
 sudo pmset -a hibernatemode 25
 ```
 
-The launchd hook (`org.acidanthera.nvramhook.{daemon,agent}.plist`) becomes vestigial once emulated NVRAM is off — harmless, can be uninstalled later for cleanliness; does not block hibernate.
+### What I deliberately do NOT recommend changing
 
-### Status as of 2026-05-08 23:00
+A side-analysis suggested reverting `agdpmod=ignore → agdpmod=vit9696`. **DO NOT make that change** — `project_hackintosh_external_display_fix.md` (RESOLVED 2026-05-06) documents `agdpmod=ignore` as load-bearing for external display; `vit9696` re-breaks it. If hibernate-25 truly requires `vit9696`, there's a genuine trade-off, but the May-2 success was on the pre-2026-05-06 config — at that point `vit9696` happened to be set because the external-display fix didn't exist yet, not because hibernate needs it. Treat agdpmod as orthogonal until proven otherwise.
 
-Config edited to match the working stack above; ESP mounted, plist lints OK, `OpenVariableRuntimeDxe.efi=false` and `LegacyOverwrite=false` confirmed. **One more reboot + battery sleep cycle pending** to verify the May-2 stack reproduces a real S4 resume (`rd=NN ms` in `pmset -g log`, `boot-image is N bytes - Success` in OC log).
+The same side-analysis suggested restoring `-noDC9`. `S3-sleep-debug-2026-05-07.md` Phase 6 explicitly **falsifies** `-noDC9` as useful on this hardware. Skip.
+
+`darkwake=0` and `forceRenderStandby=0` were on the May-2 boot-args and are not in any "do not enable" memory. Optional — try them only after the four ACPI items + NVRAM revert are confirmed insufficient on their own.
+
+### Status as of 2026-05-08 23:30
+
+- Config edits already applied: `OpenVariableRuntimeDxe.efi=false`, `LegacyOverwrite=false`, `HibernationFixup.kext=true` ✅
+- Config edits **still pending**: re-enable `_PTS to ZPTS` patch, `_WAK to ZWAK` patch, `SSDT-PTSWAKTTS-iGPU.aml`, `SSDT-EXT4-iGPU-Wake.aml`
+- End-to-end verification still pending. **Test only after the four ACPI items are re-enabled** — testing the current half-fix (NVRAM revert without ACPI revert) wastes a cycle and produces an ambiguous result.
 
 ---
 
@@ -211,6 +252,28 @@ The TL;DR and "Correct sequence" sections above have been corrected.
 
 ---
 
+## ACPI patches + SSDTs that are missing (added 2026-05-08 23:30)
+
+Direct evidence from the side-by-side log comparison:
+
+```
+May-2 ACPI patches applied (12 patches at indices 0,1,2,3,4,5,6,7,9,10,11):
+  00:687  OC: Applying 5 byte ACPI patch (_PTS to ZPTS) at 4
+  00:741  OC: Applying 5 byte ACPI patch (_WAK to ZWAK) at 5
+
+May-8 ACPI patches applied (9 patches — indices 4 and 5 absent):
+  01:024  ... patch (change _OSI to XOSI) at 3
+  01:136  ... patch (GPRW to XPRW) at 6      ← jumps from 3 to 6
+```
+
+```
+May-8 explicit SSDT skips (file present in EFI/OC/ACPI/, but Enabled=false):
+  01:676  OC: Skipping add ACPI SSDT-EXT4-iGPU-Wake.aml (0)
+  01:711  OC: Skipping add ACPI SSDT-PTSWAKTTS-iGPU.aml (0)
+```
+
+These four ACPI items were disabled earlier in the 2026-05-07 → 2026-05-08 sessions (likely as part of the S3-vs-DarkWake work, but the rationale wasn't documented in the running notes). I missed re-evaluating them when scoping the hibernate-25 regression. The side-by-side analysis credit goes to a fresh look-back at the diff that I should have done myself instead of trusting the diff's text summary.
+
 ## The actual smoking gun — NVRAM emulation (added 2026-05-08 23:00)
 
 Side-by-side OC boot log comparison:
@@ -321,7 +384,7 @@ Returns "iokit/common: data was not found" if the variable is absent — useful 
 
 ## Outstanding questions
 
-1. **End-to-end verification of the May-2-stack revert** — pending. With `OpenVariableRuntimeDxe.efi=false` + `LegacyOverwrite=false` + `HibernationFixup=true` + jlempen's pmset defaults (standby=1, tcpkeepalive=1, hibernatemode=25), does the next sleep cycle produce `boot-image is N bytes - Success` in the OC log and `rd=NN ms` in `pmset -g log`? If yes, hibernate-25 is closed.
+1. **End-to-end verification of the full May-2 stack** — pending. Required edits (the four ACPI items + the NVRAM revert + HibernationFixup + jlempen pmset defaults). Test only after **all four** ACPI items are re-enabled — testing partial reverts produces ambiguous results that can't distinguish the two regression classes.
 
 2. **Power-button LED state on this hardware** — unconfirmed. Convention: pulsing/breathing white = S3, fully off = S4 / power-off. Worth observing during the next hibernate-25 test to add an external verification signal.
 

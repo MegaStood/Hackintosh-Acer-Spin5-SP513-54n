@@ -336,7 +336,11 @@ After hibernate-25 was confirmed working in the morning, additional observations
 **2. Scheduled maintenance wakes do NOT fire during hibernate-25.** The 17:48 sleep scheduled `mDNSResponder Maintenance` at 18:33:50, but no `Wake` event was logged at 18:33; the next wake is the user-initiated 18:55 wake. Same pattern across all today's hibernate cycles — wakes are only `/UserActivity` or `/User`, never scheduled-maintenance. This is correct behavior: in true S5, the kernel is fully off and RTC alarms can't fire (nothing alive to receive them). The aspirational `Wake Requests` lines logged at sleep entry are simply not honored — and that's why drain stays low.
 
 **3. AC plug-in during hibernate appears to trigger a firmware wake bug — UNCONFIRMED.**
-The 19:12:56 sleep on battery → 22:25:37 failure cycle returned `0x002A001F : EFI/Bootrom Failure` (the same firmware bug class as Phase 4/6 S3 wake). User reports AC was plugged in mid-hibernate. Working hypothesis: AC plug-in via the embedded controller generates a wake event that goes through the same broken firmware path as S3 wake. Three other hibernate cycles today succeeded — all woken by user action (lid/power button) on battery, no power-source change. Pattern is consistent with "AC plug-in mid-hibernate triggers firmware wake bug" but not isolated to that as the only variable.
+The 19:12:56 sleep on battery → 22:25:37 failure cycle returned `0x002A001F : EFI/Bootrom Failure` (the same firmware bug class as Phase 4/6 S3 wake). User reports AC was plugged in mid-hibernate. Working hypothesis: AC plug-in via the embedded controller generates a wake event that goes through the same broken firmware path as S3 wake. Three other hibernate cycles today succeeded — all woken by user action (lid/power button) on battery, no power-source change.
+
+**3a. Hibernate-25 on AC (entered + woken on same source) WORKS.** Tested 22:47 with explicit `sudo pmset sleepnow` while on AC at 100% charge: `HibernateStats hibmode=25 ... rd=94 ms`, `Wake from Standby [CDNVA] : due to /User Using AC (Charge:100%)`. So the failure mode in #3 is NOT "AC connected during hibernate." The remaining suspect variable is **power-source change mid-cycle** (battery → AC plug-in or vice-versa), not AC itself.
+
+**Refined hypothesis:** the failed 19:12→22:25 cycle differs from successful AC and battery cycles in *only* the power-source-change variable. To isolate: hibernate on battery, then plug AC during hibernate without touching anything else, then wake — see if `0x002A001F` reproduces. Conversely, hibernate on AC, unplug during hibernate, wake — same test in reverse direction.
 
 ### Tests planned for next session
 
@@ -348,12 +352,8 @@ The 19:12:56 sleep on battery → 22:25:37 failure cycle returned `0x002A001F : 
    - If system attempts wake → check for `0x002A001F` in `pmset -g log`. If present every time, AC-plug-wake is firmware-broken.
    - If repro confirms: practical workflow becomes "wake first, then plug AC." No software fix expected (firmware bug class).
 
-2. **Sleep-on-AC behavior verification.**
-   - Plug AC, lid close (or `pmset sleepnow`). Wait 30 minutes.
-   - Check `pmset -g log` and `Battery%`:
-     - If kernel stayed in DarkWake (drain ~3-8W, battery dropped a few %): expected per existing AC policy, no hibernate.
-     - If hibernate fired (rd=NN ms in HibernateStats): unexpected, document the trigger.
-   - Hypothesis: on AC, sleep stays in DarkWake until standbydelaylow (3h) elapses, then attempts standby transition (which may hit firmware bug). Empirically untested today.
+2. **Sleep-on-AC behavior — partially tested 2026-05-09 22:47.** Forced `pmset sleepnow` on AC fires hibernate-25 and wakes correctly (`rd=94 ms`). What's still untested: **idle sleep on AC** (just leave the laptop plugged in and let it idle) — does that hibernate, or stay in DarkWake?
+   - To test: plug AC, ensure no caffeinate/etc keeping awake, leave for 5+ minutes after `displaysleep` timer fires. Check pmset log for whether HibernateStats appears with `rd=NN ms` (hibernate fired) or no HibernateStats appears at all (DarkWake only).
 
 3. **Display brightness on hibernate resume.**
    - User reports panel comes back at 100% brightness after hibernate, even though they didn't set it.

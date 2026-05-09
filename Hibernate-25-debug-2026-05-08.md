@@ -324,7 +324,46 @@ Net hibernate-relevant rows are byte-identical. Differences (config size, driver
 
 ## Open follow-ups
 
-- **DP audio over USB-C dock — `hda-gfx` test pending.** Current config has `hda-gfx` removed from the HDA controller (`PciRoot(0x0)/Pci(0x1F,0x3)`). May-2 had it. HDMI output is unfixable on Spin 5 (no LSPCON, see external display fix doc), so HDMI audio is moot, but DisplayPort audio over USB-C *might* need `hda-gfx` to expose a DP audio sink in macOS Sound preferences. To test next time: check System Settings → Sound → Output with the USB-C hub + external display connected. If a DP/HDMI audio device appears (and isn't a USB-audio device exposed by the hub), the current config is sufficient. If only laptop speakers + USB-audio appear and DP audio is wanted, re-add `hda-gfx` to the HDA device-properties dict — single-property change, minimal risk to hibernate.
+### Day-2 observations (2026-05-09 afternoon — post-RESOLVED)
+
+After hibernate-25 was confirmed working in the morning, additional observations:
+
+**1. Drain rate is acceptable but not zero.**
+- 17:48:18 Sleep, Batt 55% → 18:55:21 Wake, BATT 55%. **~1 hour in hibernate, near-zero drain.** Empirically confirms S5 + SMC + RTC behavior.
+- For comparison: real S3 on this hardware was 2.8%/hr (per Phase 6 in `S3-sleep-debug-2026-05-07.md`). Hibernate-25 is meaningfully lower — consistent with deeper-than-S3 sleep state being reached.
+- Mixed-use spans (e.g., 12% drop over 10 hours of "mostly hibernate, some active") are dominated by active-use minutes, not hibernate minutes.
+
+**2. Scheduled maintenance wakes do NOT fire during hibernate-25.** The 17:48 sleep scheduled `mDNSResponder Maintenance` at 18:33:50, but no `Wake` event was logged at 18:33; the next wake is the user-initiated 18:55 wake. Same pattern across all today's hibernate cycles — wakes are only `/UserActivity` or `/User`, never scheduled-maintenance. This is correct behavior: in true S5, the kernel is fully off and RTC alarms can't fire (nothing alive to receive them). The aspirational `Wake Requests` lines logged at sleep entry are simply not honored — and that's why drain stays low.
+
+**3. AC plug-in during hibernate appears to trigger a firmware wake bug — UNCONFIRMED.**
+The 19:12:56 sleep on battery → 22:25:37 failure cycle returned `0x002A001F : EFI/Bootrom Failure` (the same firmware bug class as Phase 4/6 S3 wake). User reports AC was plugged in mid-hibernate. Working hypothesis: AC plug-in via the embedded controller generates a wake event that goes through the same broken firmware path as S3 wake. Three other hibernate cycles today succeeded — all woken by user action (lid/power button) on battery, no power-source change. Pattern is consistent with "AC plug-in mid-hibernate triggers firmware wake bug" but not isolated to that as the only variable.
+
+### Tests planned for next session
+
+1. **Controlled AC-plug-in repro test.**
+   - Hibernate on battery (lid close, walk away).
+   - Wait 5 minutes after LED goes fully dark (confirm S5).
+   - Plug AC. Do NOT touch keyboard/lid.
+   - Wait 5 minutes. If system stays asleep → AC plug doesn't wake from S5; failure was from something else.
+   - If system attempts wake → check for `0x002A001F` in `pmset -g log`. If present every time, AC-plug-wake is firmware-broken.
+   - If repro confirms: practical workflow becomes "wake first, then plug AC." No software fix expected (firmware bug class).
+
+2. **Sleep-on-AC behavior verification.**
+   - Plug AC, lid close (or `pmset sleepnow`). Wait 30 minutes.
+   - Check `pmset -g log` and `Battery%`:
+     - If kernel stayed in DarkWake (drain ~3-8W, battery dropped a few %): expected per existing AC policy, no hibernate.
+     - If hibernate fired (rd=NN ms in HibernateStats): unexpected, document the trigger.
+   - Hypothesis: on AC, sleep stays in DarkWake until standbydelaylow (3h) elapses, then attempts standby transition (which may hit firmware bug). Empirically untested today.
+
+3. **Display brightness on hibernate resume.**
+   - User reports panel comes back at 100% brightness after hibernate, even though they didn't set it.
+   - Test: set brightness to 30%, full hibernate cycle on battery, wake, check brightness.
+   - If 100% → iGPU re-init at hibernate-resume not restoring saved brightness. Candidate fix: re-add `enable-cfl-backlight-fix` framebuffer property on iGPU (was set in May-2 config, removed in current). Single-property change, low risk to hibernate.
+   - If 30% → not hibernate-related; user probably hit F2 inadvertently.
+
+4. **DP audio over USB-C dock — `hda-gfx` test still pending.**
+   - Current config has `hda-gfx` removed from the HDA controller (`PciRoot(0x0)/Pci(0x1F,0x3)`). May-2 had it. HDMI output is unfixable on Spin 5 (no LSPCON), so HDMI audio is moot, but DisplayPort audio over USB-C *might* need `hda-gfx` to expose a DP audio sink in macOS Sound preferences.
+   - Test: check System Settings → Sound → Output with USB-C hub + external display connected. If a DP/HDMI audio device appears (not the hub's own USB audio device), current config is sufficient. Otherwise re-add `hda-gfx`.
 
 ---
 

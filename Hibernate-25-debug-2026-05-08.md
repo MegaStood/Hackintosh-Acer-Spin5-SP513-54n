@@ -365,6 +365,12 @@ The 19:12:56 sleep on battery → 22:25:37 failure cycle returned `0x002A001F : 
    - Current config has `hda-gfx` removed from the HDA controller (`PciRoot(0x0)/Pci(0x1F,0x3)`). May-2 had it. HDMI output is unfixable on Spin 5 (no LSPCON), so HDMI audio is moot, but DisplayPort audio over USB-C *might* need `hda-gfx` to expose a DP audio sink in macOS Sound preferences.
    - Test: check System Settings → Sound → Output with USB-C hub + external display connected. If a DP/HDMI audio device appears (not the hub's own USB audio device), current config is sufficient. Otherwise re-add `hda-gfx`.
 
+5. **"The boot is already done" black-screen message before picker — observed but not captured.**
+   - User reports: lid open with AC connected after hibernate → black screen with tiny "boot is already done" (or similar) text → falls through to OC picker → cold boot to macOS.
+   - Plausible mechanism: hibernate resume attempt aborts partway, boot.efi sets a "hibernate consumed" marker, second wake/retry triggers the marker check and falls through. Possibly triggered by AC plug-in or double-wake-event interaction.
+   - Test capture next occurrence: immediately after such a boot, run `ls -lt /Volumes/ESP/opencore-*.txt | head -2` (see if two log files appeared close together) and `grep -aE "boot-image|hibern|EB.H.HB|H:RDST|H:RDEND|REAN" /Volumes/ESP/opencore-LATEST.txt` to capture exact OC-side state at the failure moment.
+   - Status: behavior unverified, message wording unconfirmed. Just a forensic note for next reproduction.
+
 ---
 
 ## The "instantly back to Windows" mystery — debunked

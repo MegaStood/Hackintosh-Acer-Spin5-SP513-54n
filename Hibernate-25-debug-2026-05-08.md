@@ -1,8 +1,87 @@
-# Hibernate-25 (S4) debug — session 2026-05-07 → 2026-05-08
+# Hibernate-25 (S4) debug — session 2026-05-07 → 2026-05-09
 
 Goal: get hibernate-25 (suspend-to-disk, mode 25) working reliably on Acer Spin 5 SP513-54N (Ice Lake i7-1065G7, MacBookPro16,2 SMBIOS, Sonoma 14.8.5). Real S3 wake is firmware-broken (see `S3-sleep-debug-2026-05-07.md`); hibernate-25 is the alternative because it bypasses the firmware S3 wake bug entirely (full power-off → cold-boot resume from sleepimage via `boot.efi`).
 
-Prior context: hibernate-25 has only succeeded **twice ever** on this machine — 2026-05-02 23:59:06 (`rd=86 ms`) and 2026-05-03 00:33:04 (`rd=95 ms`). Every other attempt either silently downgraded to S3 or failed without writing a sleepimage. This session's goal was to understand *why*.
+---
+
+## RESOLVED 2026-05-09 — actual root cause was pmset persistence
+
+Two consecutive successful clamshell-on-battery hibernate-25 resumes:
+
+```
+2026-05-09 08:27:29  Wake from Standby [CDNVA] : due to /UserActivity, BATT 88%
+                     HibernateStats hibmode=25 standbydelaylow=10800 standbydelayhigh=86400 rd=95 ms
+                     WakeTime: 0.850 sec
+2026-05-09 08:30:50  Wake from Standby [CDNVA] : due to /UserActivity, BATT 85%
+                     HibernateStats hibmode=25 standbydelaylow=10800 standbydelayhigh=86400 rd=111 ms
+                     WakeTime: 0.703 sec
+```
+
+OC log signatures (both 08:27 and 08:30 boots):
+```
+OCVAR: Locate emulated NVRAM protocol - Not Found
+OCB: boot-image is 70 bytes - Success
+OCB: NVRAM hibernation is 1 / Success / 44
+OC: Hibernation activation - Success, hibernation wake - yes
+AAPL: #[EB|H:IS] 1
+```
+
+### Final working stack (validated)
+
+**OC config.plist:**
+- `UEFI:Drivers:OpenVariableRuntimeDxe.efi` Enabled = **false** (real firmware NVRAM, no emulation)
+- `UEFI:Drivers:OpenRuntime.efi` Enabled = true (required by OC, kept)
+- `NVRAM:LegacyOverwrite` = **false** (don't wipe firmware Boot vars)
+- `Misc:Boot:HibernateMode` = NVRAM
+- `Booter:Quirks:DiscardHibernateMap` = true
+- `UEFI:ReservedMemory` entry: Address=569344, Size=4096, Type=RuntimeCode
+- `Kernel:Add:HibernationFixup.kext` Enabled = true (v1.5.4)
+
+**pmset:**
+```bash
+sudo pmset restoredefaults     # standby=1, tcpkeepalive=1, etc — defaults are right
+sudo pmset -a hibernatemode 25
+ls -la /Library/Preferences/com.apple.PowerManagement*.plist  # verify mtime updated to NOW
+```
+
+The `ls` is **not** optional — see "What was actually wrong" below.
+
+### What was actually wrong (corrects every earlier section of this doc)
+
+The TWO regressions hypothesis (NVRAM emulation + four ACPI items) was wrong on the second half. Re-enabling `_PTS to ZPTS` patch, `_WAK to ZWAK` patch, and `SSDT-PTSWAKTTS-iGPU.aml` made no difference — the 2026-05-09 successes had `SSDT-EXT4-iGPU-Wake.aml` still disabled. Those four items were noise, not signal.
+
+**The actual silent killer: pmset persistence.** Yesterday evening I ran
+```
+sudo rm /Library/Preferences/com.apple.PowerManagement*    # zsh: no matches found
+sudo pmset hibernatefile /var/vm/sleepimage
+sudo pmset -a hibernatemode 25
+pmset -g | grep hibernatemode    # showed 25
+```
+The `rm` reported "no matches found" — the plists were already missing. Subsequent `pmset` commands updated IOKit runtime state (so `pmset -g` correctly showed 25) but **never persisted to disk**, because pmset's create-if-missing path apparently doesn't take when the daemon holds stale state. Every subsequent reboot — including the 5+ failed sleep cycles between then and 2026-05-09 morning — loaded factory defaults (`hibernatemode=3`) from the regenerated plist. Mode 25 was never in effect at any sleep entry. All "hibernate-25 failed" data points were actually "S3 attempted (because mode=3) → firmware bug → cold reboot."
+
+### How to detect this state
+
+Before any sleep test, run:
+```
+ls -la /Library/Preferences/com.apple.PowerManagement*.plist
+```
+If the files don't exist, or their mtime is older than the most recent `pmset -a` command, **the kernel will not use the settings you think you set**. Reboot to let powerd recreate the plists with defaults, then re-run your `pmset -a` commands so they write to existing files. Verify mtime updates after the command. (Captured as `feedback_pmset_plist_reset_ordering.md` in memory so future debug sessions surface it automatically.)
+
+### Forensic discriminators (still correct)
+
+- Real S4 resume: `OCB: boot-image is N bytes - Success` (N>0) + `OC: Hibernation activation - Success, hibernation wake - yes` + pmset `Wake from Standby [CDNVA]` + `HibernateStats hibmode=25 ... rd=NN ms`. **`rd=NN ms` is the unforgeable userspace signal.**
+- Cold boot (no resume): `boot-image is 0 bytes - Not Found` + `Hibernation activation - Not Found, hibernation wake - no`.
+- **`/var/vm/sleepimage` size is NOT diagnostic.** File stays at exactly 1,073,741,824 bytes (1 GiB pre-allocation) even when hibernate fires successfully — the kernel writes the compressed working set within the pre-allocated file without growing it. I claimed otherwise mid-session; that was wrong.
+
+### Caveats — DO NOT touch on follow-up
+
+- Do not revert `agdpmod=ignore` → `vit9696`. Required for external display (`project_hackintosh_external_display_fix.md`); orthogonal to hibernate.
+- Do not restore `-noDC9`. Phase 6 in `S3-sleep-debug-2026-05-07.md` falsified it.
+- Do not remove `org.acidanthera.nvramhook.{daemon,agent}` LaunchDaemons while emulated NVRAM is OFF — they're vestigial but harmless. Only remove if you also keep `OpenVariableRuntimeDxe.efi=false`.
+
+---
+
+Prior context: hibernate-25 had only succeeded **twice ever** on this machine before this session — 2026-05-02 23:59:06 (`rd=86 ms`) and 2026-05-03 00:33:04 (`rd=95 ms`). Every other attempt either silently downgraded to S3 or failed without writing a sleepimage. This session's goal was to understand *why*. Sections below capture the falsified hypotheses and forensic work along the way; the resolution above supersedes them.
 
 ---
 

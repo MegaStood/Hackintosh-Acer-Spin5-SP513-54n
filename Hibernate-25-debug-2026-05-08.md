@@ -246,6 +246,86 @@ The two regressions stack independently:
 
 Both must be reverted for the May-2 working stack to reproduce.
 
+> Note added 2026-05-09 after RESOLVED: the "Regression A" framing above was overstated. The 2026-05-09 successful resumes had `SSDT-EXT4-iGPU-Wake.aml` still disabled and were still successful, so that one item was definitely NOT load-bearing. The other three (`_PTS to ZPTS`, `_WAK to ZWAK`, `SSDT-PTSWAKTTS-iGPU.aml`) were active during the success but their necessity was never ablation-tested. They may be load-bearing, or may be incidental decorations. Regression B (NVRAM emulation) is the only confirmed-load-bearing OC-side change. The actual proximate cause of the May-8 failures was the pmset-persistence bug documented in the RESOLVED section at the top.
+
+### Table 3 — Resume vs Resume (May-2 23:58 vs May-9 08:27, both successful)
+
+Captures the validated working stack. Proves reproducibility — the 2026-05-09 resume reproduces the 2026-05-02 success on the same hardware, after correcting the pmset persistence bug.
+
+```
+┌──────────────────────┬──────────────────────┬──────────────────────────┐
+│        Check         │ May-2 23:58 (working │  May-9 08:27 (working    │
+│                      │        resume)       │         resume)          │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ Boot type            │ Hibernate resume     │ Hibernate resume         │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ Config size          │ 97,421 bytes         │ 101,074 bytes            │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ Drivers configured   │ 3                    │ 4 (+ OpenVariableRuntime │
+│                      │                      │ Dxe disabled)            │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ Drivers loaded       │ HfsPlus, OpenCanopy, │ HfsPlus, OpenRuntime     │
+│                      │ OpenRuntime          │ (OpenCanopy + OpenVar    │
+│                      │                      │ both skipped)            │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ NVRAM probe          │ Locate emulated      │ Locate emulated          │
+│                      │ NVRAM protocol - Not │ NVRAM protocol - Not     │
+│                      │ Found ✅              │ Found ✅                  │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ NVRAM init           │ (no extra steps) ✅   │ (no extra steps) ✅       │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ NVRAM ops on         │ ignored, exists      │ ignored, exists          │
+│ boot-args            │ (no-op) ✅            │ (no-op) ✅                │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ ACPI patches applied │ 0,1,2,3,4,5,6,7,9,10 │ 0,1,2,3,4,5,6,7,9,10,11  │
+│                      │ ,11 (11 patches)     │ (11 — IDENTICAL set)     │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ _PTS to ZPTS (idx 4) │ ✅ Applied            │ ✅ Applied                │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ _WAK to ZWAK (idx 5) │ ✅ Applied            │ ✅ Applied                │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ SSDT-PTSWAKTTS-iGPU. │ ✅ Loaded (no skip   │ ✅ Loaded (no skip       │
+│ aml                  │ line)                │ line)                    │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ SSDT-EXT4-iGPU-Wake. │ (file not in config  │ ❌ Skipping add          │
+│ aml                  │ — entry didn't exist │ (disabled — but          │
+│                      │ on May 2)            │ functionally same)       │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ SSDT-NameS3-disable. │ ❌ Skipped           │ ❌ Skipped (same)        │
+│ aml                  │ (correctly)          │                          │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ boot-args agdpmod    │ vit9696              │ ignore                   │
+│                      │ (pre-display fix)    │ (post-display fix —      │
+│                      │                      │ orthogonal to hibernate) │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ OCB: boot-image is N │ 70 bytes - Success ✅ │ 70 bytes - Success ✅     │
+│ bytes                │                      │                          │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ OCB: NVRAM           │ 1 / Success / 44 ✅   │ 1 / Success / 44 ✅       │
+│ hibernation is       │                      │                          │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ OC: Hibernation      │ Success, hibernation │ Success, hibernation     │
+│ activation           │ wake - yes ✅         │ wake - yes ✅             │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ #[EB|H:IS] (boot.efi │ 1 ✅                  │ 1 ✅                      │
+│ flag)                │                      │                          │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ pmset rd= timing     │ 86 ms                │ 95 ms / 111 ms (two      │
+│                      │                      │ consecutive resumes)     │
+├──────────────────────┼──────────────────────┼──────────────────────────┤
+│ pmset Wake reason    │ Wake from Standby    │ Wake from Standby        │
+│                      │ [CDNVA]              │ [CDNVA]                  │
+└──────────────────────┴──────────────────────┴──────────────────────────┘
+```
+
+Net hibernate-relevant rows are byte-identical. Differences (config size, driver count, agdpmod) are orthogonal to hibernate. **Working stack confirmed reproducible.**
+
+---
+
+## Open follow-ups
+
+- **DP audio over USB-C dock — `hda-gfx` test pending.** Current config has `hda-gfx` removed from the HDA controller (`PciRoot(0x0)/Pci(0x1F,0x3)`). May-2 had it. HDMI output is unfixable on Spin 5 (no LSPCON, see external display fix doc), so HDMI audio is moot, but DisplayPort audio over USB-C *might* need `hda-gfx` to expose a DP audio sink in macOS Sound preferences. To test next time: check System Settings → Sound → Output with the USB-C hub + external display connected. If a DP/HDMI audio device appears (and isn't a USB-audio device exposed by the hub), the current config is sufficient. If only laptop speakers + USB-audio appear and DP audio is wanted, re-add `hda-gfx` to the HDA device-properties dict — single-property change, minimal risk to hibernate.
+
 ---
 
 ## The "instantly back to Windows" mystery — debunked

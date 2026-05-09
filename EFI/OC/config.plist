@@ -210,7 +210,7 @@
 				<key>Comment</key>
 				<string>Sleep/wake _PTS/_WAK/_TTS hook (pairs with renames)</string>
 				<key>Enabled</key>
-				<false/>
+				<true/>
 				<key>Path</key>
 				<string>SSDT-PTSWAKTTS-iGPU.aml</string>
 			</dict>
@@ -392,7 +392,7 @@
 				<key>Count</key>
 				<integer>0</integer>
 				<key>Enabled</key>
-				<false/>
+				<true/>
 				<key>Find</key>
 				<data>
 				X1BUUwE=
@@ -430,7 +430,7 @@
 				<key>Count</key>
 				<integer>0</integer>
 				<key>Enabled</key>
-				<false/>
+				<true/>
 				<key>Find</key>
 				<data>
 				X1dBSwk=
@@ -1547,7 +1547,7 @@
 				<key>Comment</key>
 				<string>V1.5.4</string>
 				<key>Enabled</key>
-				<false/>
+				<true/>
 				<key>ExecutablePath</key>
 				<string>Contents/MacOS/HibernationFixup</string>
 				<key>MaxKernel</key>
@@ -2492,7 +2492,7 @@
 			</array>
 		</dict>
 		<key>LegacyOverwrite</key>
-		<true/>
+		<false/>
 		<key>LegacySchema</key>
 		<dict>
 			<key>4D1EDE05-38C7-4A6A-9CC6-4BCCA8B38C14</key>
@@ -2680,9 +2680,9 @@
 				<key>Comment</key>
 				<string>Emulated NVRAM</string>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>LoadEarly</key>
-				<true/>
+				<false/>
 				<key>Path</key>
 				<string>OpenVariableRuntimeDxe.efi</string>
 			</dict>
@@ -2694,7 +2694,7 @@
 				<key>Enabled</key>
 				<true/>
 				<key>LoadEarly</key>
-				<true/>
+				<false/>
 				<key>Path</key>
 				<string>OpenRuntime.efi</string>
 			</dict>
@@ -2821,7 +2821,7 @@
 			<key>ReloadOptionRoms</key>
 			<false/>
 			<key>RequestBootVarRouting</key>
-			<true/>
+			<false/>
 			<key>ResizeGpuBars</key>
 			<integer>-1</integer>
 			<key>ResizeUsePciRbIo</key>

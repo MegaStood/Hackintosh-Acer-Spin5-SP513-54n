@@ -1,0 +1,76 @@
+# pmset settings — Spin 5 working hibernate-25 stack
+Captured: 2026-05-09 (after Hibernate-25 RESOLVED)
+Hardware: Acer Spin 5 SP513-54N, i7-1065G7, MacBookPro16,2 SMBIOS, Sonoma 14.8.5
+
+## pmset -g (currently in use)
+```
+System-wide power settings:
+Currently in use:
+ standby              1
+ halfdim              1
+ hibernatefile        /var/vm/sleepimage
+ proximitywake        0
+ gpuswitch            2
+ powernap             0
+ disksleep            10
+ standbydelayhigh     86400
+ sleep                1 (sleep prevented by caffeinate)
+ hibernatemode        25
+ ttyskeepawake        1
+ displaysleep         2
+ tcpkeepalive         1
+ highstandbythreshold 50
+ lowpowermode         0
+ standbydelaylow      10800
+```
+
+## pmset -g custom (AC + Battery profiles)
+```
+Battery Power:
+ standbydelayhigh     86400
+ lowpowermode         0
+ proximitywake        0
+ standby              1
+ standbydelaylow      10800
+ ttyskeepawake        1
+ hibernatemode        25
+ gpuswitch            2
+ powernap             0
+ hibernatefile        /var/vm/sleepimage
+ highstandbythreshold 50
+ displaysleep         2
+ sleep                1
+ lessbright           1
+ halfdim              1
+ tcpkeepalive         1
+ disksleep            10
+AC Power:
+ lowpowermode         0
+ standbydelayhigh     86400
+ standbydelaylow      10800
+ standby              1
+ proximitywake        1
+ ttyskeepawake        1
+ hibernatemode        25
+ powernap             1
+ gpuswitch            2
+ hibernatefile        /var/vm/sleepimage
+ highstandbythreshold 50
+ displaysleep         10
+ womp                 1
+ networkoversleep     0
+ sleep                1
+ tcpkeepalive         1
+ halfdim              1
+ disksleep            10
+```
+
+## How to apply this on a fresh setup
+```bash
+sudo pmset restoredefaults
+sudo pmset -a hibernatemode 25
+# verify persistence (CRITICAL — pmset -g lies if plist write fails):
+ls -la /Library/Preferences/com.apple.PowerManagement*.plist
+# expect: mtime updated to NOW, BOTH plists present
+# if plists missing or mtime stale: reboot, then re-run pmset commands
+```

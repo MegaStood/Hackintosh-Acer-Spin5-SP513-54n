@@ -373,6 +373,46 @@ The 19:12:56 sleep on battery → 22:25:37 failure cycle returned `0x002A001F : 
 
 ---
 
+## Day-2 finding (2026-05-09 evening): `HibernateSkipsPicker` is the missing knob
+
+User observed: on AC, system auto-wakes ~30 min after hibernate, lands at OC picker (photo capture confirmed: 4-entry menu — ESP, ESP, Windows, Macintosh HD). Manually selecting Macintosh HD → resume completes cleanly. Without intervention, the picker either times out into a wrong entry, or a lid-open event triggers a second wake path that hits the "boot already started" marker → cold-boot recovery.
+
+Log capture from one of these cycles (`opencore-2026-05-09-153443.txt`) reveals the actual mechanism:
+
+```
+01:081  OCB: boot-image is 70 bytes - Success                  ← hibernate state DETECTED ✓
+01:082  OCB: NVRAM hibernation is 1 / Success / 44
+01:084  OC: Hibernation activation - Success, hibernation wake - yes
+01:102  OCB: Found 6 BootOrder entries with BootNext excluded   ← BootNext is MISSING
+01:111  0 -> Boot0004 = ...\EFI\OC\OpenCore.efi    (OC itself first in BootOrder)
+01:121  2 -> Boot0082 = ...\System\Library\CoreServices\boot.efi   (macOS at position 2)
+01:348  OCB: Showing menu...                                    ← picker shown anyway
+```
+
+OC detected hibernate state but **fell to picker because `BootNext` was missing** — without that variable, OC has no instruction to autopilot to the macOS entry. macOS *does* set BootNext at sleep entry (May-2 success log shows it: `Found BootNext 0082 of type 2`), but on this Insyde firmware **the BootNext variable gets clobbered on certain wake paths** while `boot-image` (in Apple's `7C436110-…` GUID) survives.
+
+Two NVRAM regions, two behaviors:
+- **`boot-image`** (Apple GUID `7C436110-…`): **survives** firmware wake transitions on this hardware
+- **`BootNext`** (EFI Global GUID `8BE4DF61-…`): **gets cleared** by Insyde firmware on some wake transitions (likely the auto-wake / AC paths specifically — battery+user wake preserves it, as proven by today's morning resume cycles)
+
+So OC's autopilot path (which depends on BootNext) breaks, but boot.efi's resume path (which depends on boot-image) works. Manual Mac HD selection bridges the two.
+
+### Fix: `Misc:Boot:HibernateSkipsPicker = true`
+
+Current OC config has it set to `false`. Flipping to `true` makes OC skip the picker entirely when hibernate state is detected — auto-routes to the macOS boot entry it discovered, regardless of whether BootNext is present. The resume then completes via boot.efi → `boot-image` (which is intact) → sleepimage read.
+
+**Single key flip in `Misc:Boot:HibernateSkipsPicker`. No other config changes required.** Cold-boot behavior unchanged (picker still shows). Only hibernate-detected boots skip the picker.
+
+Tradeoff: can't enter picker during a hibernate-resume. For daily use this is a clear win — the picker isn't needed when resuming.
+
+### Status
+
+- Root cause: BootNext clobbering on Insyde firmware combined with `HibernateSkipsPicker=false` requiring BootNext for autopilot. Captured in log evidence.
+- Fix: identified, not yet applied/tested. Single-property edit, reversible.
+- Expected outcome: AC auto-wake → resume completes silently, no picker, no double-wake-marker trap. Battery cycles unchanged (already worked).
+
+---
+
 ## The "instantly back to Windows" mystery — debunked
 
 Symptom: after a failed sleep, power-on lands on the Windows login screen "instantly". Looked uncannily like hibernation crossing OS boundaries.

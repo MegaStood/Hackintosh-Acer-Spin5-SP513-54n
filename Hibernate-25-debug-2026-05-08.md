@@ -704,6 +704,117 @@ Returns "iokit/common: data was not found" if the variable is absent — useful 
 
 ---
 
+## Day-3 follow-up (2026-05-11) — AC hibernate confirmed, BT regression catalogued, OC log gap
+
+### 1. Hibernate-25 on AC: works, but resume confuses the user-visible signals
+
+Test cycle on AC, lid-close → ~2h wait → lid-open:
+
+| Time | Event | Source |
+|---|---|---|
+| 13:33:48 | Cold boot, AC plugged, charge 100% | pmset "Sleep/Wakes since boot" |
+| 13:35:18 | `Entering Sleep state due to 'Software Sleep pid=161'` (loginwindow lid-close) | pmset |
+| 13:35:19 | Wake Requests scheduled (mDNSResponder maintenance, CSPN, UserWake) | pmset |
+| **15:46:21** | **`Wake from Standby [CDNVA] : due to /UserActivity Assertion`** | pmset |
+| **15:46:21** | **`HibernateStats hibmode=25 standbydelaylow=10800 standbydelayhigh=86400 rd=82 ms`** | pmset — the unforgeable resume signal |
+| 15:46:21 | `WakeTime: 8.188 sec` | pmset |
+| 15:46:59 | loginwindow PID **161** user activity (same PID as pre-sleep) | pmset |
+| 15:49:10 | `sysctl kern.boottime` updated to this | sysctl |
+
+**Verdict: hibernate-25 succeeded on AC.** `rd=82 ms` is empirical proof of a real S4 resume. Same loginwindow PID (161) before and after sleep — userspace session was restored, not respawned.
+
+### 2. Three forensic-signal traps to be aware of on a successful S4 resume
+
+These caused user-visible "feels like cold boot" confusion and almost led to false-failure conclusions:
+
+| Signal | What naive reading suggests | Actual meaning |
+|---|---|---|
+| macOS shows **login/unlock screen** on lid-open | "system cold-booted to login window" | Session was locked at lid-close, this is the lock screen — same kernel, same userspace |
+| `sysctl kern.boottime` shows a recent time | "system rebooted at that time" | Kernel re-baselines `boottime` post-resume so uptime math doesn't include sleep duration. Cold-boot continuity is in `pmset` "since boot at X" line, not sysctl |
+| `/var/vm/sleepimage` mtime is current | "sleepimage just got rewritten = something is hibernating now" | Kernel re-allocates the 1 GiB file shortly after resume; touching the mtime is normal |
+| OC display shows "boot is already done" / "already started" message | "OC refused to resume, fell through to cold boot" | Informational message from OcAfterBootCompatLib; resume can still complete after it |
+
+**Rule for next session: trust `HibernateStats rd=NN ms` over user-visible feel.** If `rd=NN ms` is present in pmset log for the wake event, resume succeeded — regardless of what the screen showed.
+
+### 3. Bluetooth regression after S4 resume — catalogued, not solved
+
+**Symptom observed post-resume:**
+```
+Chipset:           THIRD_PARTY_DONGLE      ← BTLFX transformation failed
+Firmware Version:  v256 c256                ← Default "no firmware loaded" sentinel
+```
+
+**Full BT stack loaded correctly (verified via `kextstat`):**
+
+| Kext | Version | Status |
+|---|---|---|
+| `as.vit9696.Lilu` | 1.7.2 | loaded ✓ |
+| `com.zxystd.IntelBTPatcher` | 2.4.0 | loaded ✓ |
+| `as.acidanthera.BlueToolFixup` | 2.7.2 | loaded ✓ |
+| `com.zxystd.IntelBluetoothFirmware` | 2.4.0 | loaded ✓ |
+| `com.zxystd.AirportItlwm` | 2.3.0 | loaded ✓ (WiFi) |
+
+`nvram boot-args`: `-btlfxallowanyaddr -btlfxboardid -btlfxnvramcheck` all present.
+
+**Root cause (mechanism):** S4 cuts USB power. On resume, the AX201 BT controller comes back as raw silicon needing firmware upload. `IntelBluetoothFirmware.kext` hooks USB-device-publish events, but on the hibernate-resume path the USB enumeration timing races past the kext's match window — the controller enumerates *without* firmware → reports as `THIRD_PARTY_DONGLE` for the rest of the session.
+
+**OpenIntelWireless project status (checked 2026-05-11):**
+- Latest IntelBluetoothFirmware release is **v2.4.0** (Feb 2026) — what's currently installed. No upgrade available.
+- None of v2.1.0 → v2.4.0 release notes mention hibernate, sleep, wake, S4, S3, suspend, resume, or power management.
+- Open issues mentioning the symptom: [#460](https://github.com/OpenIntelWireless/IntelBluetoothFirmware/issues/460), [#486](https://github.com/OpenIntelWireless/IntelBluetoothFirmware/issues/486), [#127](https://github.com/OpenIntelWireless/IntelBluetoothFirmware/issues/127). Closed [#484](https://github.com/OpenIntelWireless/IntelBluetoothFirmware/issues/484) marked completed but symptom persists for us.
+- **No project-level fix on the horizon for AX201 S4-resume firmware re-upload.**
+
+**Workarounds, ordered by reliability:**
+
+| Approach | Reliability | Cost |
+|---|---|---|
+| Reboot after hibernate | 100% (cold-power-on triggers full firmware upload) | 1 reboot, ~30 s |
+| sleepwatcher + `killall bluetoothd` | Estimated ~30% (kext match path doesn't re-fire on daemon restart) | ~30 min setup |
+| Custom USB port re-enumerate via `IOUSBDeviceReEnumerate()` C helper | ~70% if implementable; macOS has no equivalent of Linux's `/sys/bus/usb/devices/*/authorized` | Multi-hour code project |
+| Kext-side: hook `IOPMrootDomain` for `kIOMessageSystemHasPoweredOn`, re-run firmware upload | ~95% (architecturally correct) | Project-scale; upstream not currently accepting in this area |
+
+**Day-3 decision:** accept "reboot after hibernate to recover BT" as the workflow quirk until further notice. Pursue Level-1 sleepwatcher experiment opportunistically; not blocking other work.
+
+### 4. OC boot log gap — RETRACTED 2026-05-12
+
+**Earlier in this section I claimed:** "no `opencore-2026-05-11-*.txt` written to ESP since 07:49, missing for the 13:33 cold boot and the 15:46 resume." Multiple hypotheses were proposed (macOS metadata reorganization, mkfs.vfat BPB quirk, etc.).
+
+**That claim was wrong.** When I re-listed `/Volumes/EFI` on 2026-05-12 after explicitly remounting the ESP, the directory contained logs I'd previously missed:
+
+```
+07:49:02   opencore-2026-05-11-074902.txt
+09:47:34   opencore-2026-05-11-094734.txt   ← was always there
+10:24:12   opencore-2026-05-11-102412.txt   ← was always there
+10:25:00   opencore-2026-05-11-102454.txt   ← was always there
+12:00:02   opencore-2026-05-11-120002.txt   ← was always there
+```
+
+OC has been writing logs throughout the day. The "missing" appearance in my earlier listing was almost certainly a stale-mount or directory-cache issue at the time I ran `ls`, not a real OC malfunction.
+
+**What I should have done:** before building hypotheses on top of an `ls` result, verify the ESP was freshly mounted and the listing reflected current state. The lesson is captured in the lessons memory under "cross-check userspace tools against disk state" — I made the call too fast from a single command snapshot.
+
+**The substantive bug that DOES remain** (separate from the log-gap retraction): `Misc:Boot:HibernateSkipsPicker = true` is set and verified on disk, hibernate-25 resumes succeed (`rd=82-95 ms` across many cycles), but the picker still shows on resume with a "boot already started" message preceding it. Resume completes after manual entry selection. The skip-picker setting appears to not be honored when OC's hibernate-detection enters the "boot already started" fallback path. Real diagnosis requires reading the OC boot log from an actual resume event — which we now have access to and should compare against a clean cold-boot log next session.
+
+### 5. ESP filesystem expansion — done
+
+| Layer | Before | After |
+|---|---|---|
+| GPT partition (`disk0s2`) | 231.7 MB | 231.7 MB (already correct) |
+| FAT32 filesystem inside | 104 MB (97% full) | 228.2 MB (54% used, 100 Mi free) |
+| Volume label / macOS mount point | `ESP` / `/Volumes/ESP` | `EFI` / `/Volumes/EFI` |
+| EFI tree integrity | — | 77 MB, all files intact, config.plist lints OK |
+
+Done via Linux `mkfs.vfat -F 32` reformat + restore of EFI tree. In-place fatresize/gparted attempts had silently failed earlier — reformat-and-copy is what actually worked. 187 MB of unallocated GPT space remains adjacent to disk0s2 (reserved for future use).
+
+### 6. Open items going forward
+
+1. Run the reboot diagnostic in §4 to disambiguate the OC log-write gap. Update this section with the outcome.
+2. HibernateSkipsPicker validation — still pending. The AC auto-wake-into-picker problem from Day-2 §"AC auto-wake" is the next test once this BT/log work is settled.
+3. Long-tail BT recovery: revisit the sleepwatcher experiment if/when reboot-after-hibernate becomes friction.
+4. Eventual switch from DEBUG to RELEASE kexts — defer until the stack has been stable for a week.
+
+---
+
 ## Reference
 
 - `S3-sleep-debug-2026-05-07.md` — companion doc; firmware S3 wake bug context.

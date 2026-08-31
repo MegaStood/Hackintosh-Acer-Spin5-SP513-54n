@@ -1,0 +1,1404 @@
+<title>Pushback to Wheels-Up</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+:root{
+  --bg:#F1EEE6; --panel:#FBFAF6; --panel2:#E7E2D6; --sunk:#E2DCCC;
+  --line:#CFC8B6; --line2:#B9B19B;
+  --ink:#151A1D; --ink2:#525B60; --ink3:#868E92;
+  --amber:#9C6604; --amber-ink:#FFF6E4;
+  --green:#146B44; --red:#A83426; --blue:#245C99;
+  --strip:#FFFDF6; --shadow:0 10px 26px rgba(20,25,28,.13);
+  --f-disp:"Barlow Condensed","Oswald","Arial Narrow",system-ui,sans-serif;
+  --f-body:"Barlow","Helvetica Neue",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono","SFMono-Regular",Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
+  --bg:#0C1215; --panel:#141C21; --panel2:#1B252B; --sunk:#0F171B;
+  --line:#2A363D; --line2:#3A4A53;
+  --ink:#DFE8EC; --ink2:#94A5AD; --ink3:#65777F;
+  --amber:#E8A317; --amber-ink:#1A1206;
+  --green:#3ECF87; --red:#EC6553; --blue:#5AA0E8;
+  --strip:#1A242A; --shadow:0 12px 30px rgba(0,0,0,.5);
+}}
+:root[data-theme="dark"]{
+  --bg:#0C1215; --panel:#141C21; --panel2:#1B252B; --sunk:#0F171B;
+  --line:#2A363D; --line2:#3A4A53;
+  --ink:#DFE8EC; --ink2:#94A5AD; --ink3:#65777F;
+  --amber:#E8A317; --amber-ink:#1A1206;
+  --green:#3ECF87; --red:#EC6553; --blue:#5AA0E8;
+  --strip:#1A242A; --shadow:0 12px 30px rgba(0,0,0,.5);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);
+     height:100vh;overflow:hidden;-webkit-font-smoothing:antialiased}
+#gl{position:fixed;inset:0;width:100%;height:100%;display:block;background:#8FB4D2;touch-action:none;cursor:grab}
+#gl.drag{cursor:grabbing}
+
+.lbl{font-family:var(--f-disp);font-weight:600;font-size:10.5px;letter-spacing:.15em;
+     text-transform:uppercase;color:var(--ink3);line-height:1}
+.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+
+/* ---- identity ---- */
+#rail{position:fixed;left:14px;top:14px;bottom:118px;width:296px;z-index:5;pointer-events:none;
+  display:flex;flex-direction:column;gap:10px;max-width:calc(100vw - 28px)}
+#rail>*{pointer-events:auto}
+#ident{background:var(--panel);flex:none;
+  border:1px solid var(--line);border-radius:3px;box-shadow:var(--shadow);
+  display:flex;align-items:stretch;overflow:hidden}
+#ident .icao{background:var(--ink);color:var(--bg);font-family:var(--f-disp);font-weight:700;
+  font-size:22px;letter-spacing:.06em;display:flex;align-items:center;padding:0 13px}
+#ident .txt{padding:9px 14px 10px}
+#ident h1{margin:0;font-family:var(--f-disp);font-weight:700;font-size:17px;letter-spacing:.045em;
+  text-transform:uppercase;line-height:1.1;text-wrap:balance}
+#ident p{margin:4px 0 0;font-size:11.5px;color:var(--ink2);line-height:1.35}
+#ident b{color:var(--amber);font-weight:600}
+
+/* ---- camera chips ---- */
+#cams{position:fixed;top:14px;right:14px;z-index:5;display:flex;flex-wrap:wrap;gap:5px;justify-content:flex-end;max-width:44vw}
+.chip{font-family:var(--f-disp);font-weight:600;font-size:11px;letter-spacing:.11em;text-transform:uppercase;
+  padding:7px 11px;border:1px solid var(--line);background:var(--panel);color:var(--ink2);
+  border-radius:3px;cursor:pointer;box-shadow:var(--shadow)}
+.chip:hover{color:var(--ink);border-color:var(--line2)}
+.chip[aria-pressed="true"]{background:var(--amber);border-color:var(--amber);color:var(--amber-ink)}
+.chip:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+
+/* ---- flight strip bay ---- */
+#bay{flex:1;min-height:0;
+  display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);
+  border-radius:3px;box-shadow:var(--shadow);overflow:hidden}
+#bay header{padding:9px 12px 8px;border-bottom:1px solid var(--line);background:var(--panel2);
+  display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex:none}
+#bay header .lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#bay header .n{font-family:var(--f-mono);font-size:11px;color:var(--ink2)}
+#strips{flex:1;overflow-y:auto;overflow-x:hidden;padding:6px 6px 10px;display:flex;flex-direction:column;gap:4px}
+#strips::-webkit-scrollbar{width:8px}
+#strips::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+.strip{background:var(--strip);border:1px solid var(--line);border-left:4px solid var(--ink3);
+  border-radius:2px;padding:6px 8px;display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:baseline}
+.strip .cs{font-family:var(--f-mono);font-weight:700;font-size:12.5px;letter-spacing:.02em;white-space:nowrap}
+.strip .ty{font-family:var(--f-mono);font-size:10.5px;color:var(--ink2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.strip .ph{font-family:var(--f-disp);font-weight:600;font-size:10px;letter-spacing:.12em;
+  text-transform:uppercase;text-align:right;white-space:nowrap}
+.strip .mt{font-family:var(--f-mono);font-size:10px;color:var(--ink3);text-align:right;white-space:nowrap}
+.strip.p-push{border-left-color:var(--blue)} .strip.p-push .ph{color:var(--blue)}
+.strip.p-taxi{border-left-color:var(--ink3)} .strip.p-taxi .ph{color:var(--ink2)}
+.strip.p-hold{border-left-color:var(--red)} .strip.p-hold .ph{color:var(--red)}
+.strip.p-dep{border-left-color:var(--green)} .strip.p-dep .ph{color:var(--green)}
+#bay .empty{padding:22px 14px;color:var(--ink3);font-size:12.5px;line-height:1.5}
+
+/* ---- status bar ---- */
+#bar{position:fixed;left:14px;right:14px;bottom:14px;z-index:5;background:var(--panel);
+  border:1px solid var(--line);border-radius:3px;box-shadow:var(--shadow);
+  display:grid;grid-template-columns:auto 1fr auto;gap:0;align-items:stretch;overflow:hidden}
+#bar>section{padding:9px 14px;display:flex;align-items:center;gap:14px;min-width:0}
+#bar>section+section{border-left:1px solid var(--line)}
+.stat{display:flex;flex-direction:column;gap:5px}
+.stat .v{font-family:var(--f-mono);font-weight:700;font-size:16px;line-height:1;font-variant-numeric:tabular-nums}
+.pill{font-family:var(--f-disp);font-weight:700;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+  padding:4px 8px;border-radius:2px;display:inline-block}
+.pill.ok{background:var(--green);color:var(--bg)}
+.pill.busy{background:var(--red);color:var(--bg)}
+#counts{display:flex;gap:12px;flex-wrap:wrap;flex:1;min-width:0}
+#counts .c{display:flex;flex-direction:column;gap:5px}
+#counts .c .v{font-family:var(--f-mono);font-weight:500;font-size:14px;line-height:1}
+.meter{height:5px;background:var(--sunk);border:1px solid var(--line);border-radius:3px;overflow:hidden;width:130px}
+.meter i{display:block;height:100%;background:var(--amber)}
+button.act{font-family:var(--f-disp);font-weight:700;font-size:12px;letter-spacing:.12em;text-transform:uppercase;
+  padding:8px 13px;border:1px solid var(--line2);background:var(--panel2);color:var(--ink);
+  border-radius:3px;cursor:pointer;min-width:74px}
+button.act:hover{border-color:var(--amber);color:var(--amber)}
+input[type=range]{-webkit-appearance:none;appearance:none;width:118px;height:5px;background:var(--sunk);
+  border:1px solid var(--line);border-radius:3px;outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:17px;background:var(--amber);
+  border:none;border-radius:2px;cursor:pointer}
+input[type=range]::-moz-range-thumb{width:13px;height:17px;background:var(--amber);border:none;border-radius:2px;cursor:pointer}
+#sepv.bad{color:var(--red)}
+#sepv.good{color:var(--green)}
+
+/* ---- splash ---- */
+#splash{position:fixed;inset:0;z-index:20;background:var(--bg);display:flex;
+  align-items:center;justify-content:center;flex-direction:column;gap:14px}
+#splash .t{font-family:var(--f-disp);font-weight:700;font-size:15px;letter-spacing:.3em;text-transform:uppercase;color:var(--ink2)}
+#splash .b{width:190px;height:4px;background:var(--sunk);border:1px solid var(--line);overflow:hidden}
+#splash .b i{display:block;height:100%;width:35%;background:var(--amber);animation:sweep 1.1s ease-in-out infinite}
+@keyframes sweep{0%{transform:translateX(-110%)}100%{transform:translateX(310%)}}
+#splash.done{display:none}
+#err{position:fixed;inset:0;z-index:30;background:var(--bg);display:none;padding:40px;
+  font-family:var(--f-body);font-size:15px;line-height:1.6;color:var(--ink)}
+
+@media (prefers-reduced-motion:reduce){#splash .b i{animation:none;width:100%}}
+/* Below the wide layout the bar folds into two rows: readouts and controls
+   on top, the movement counts as a grid underneath. */
+@media (max-width:1120px){
+  #rail{bottom:158px}
+  #bar{grid-template-columns:1fr auto}
+  #bar>section:nth-child(1){grid-column:1;grid-row:1}
+  #bar>section:nth-child(3){grid-column:2;grid-row:1}
+  #bar>section:nth-child(2){grid-column:1/-1;grid-row:2;border-left:none;border-top:1px solid var(--line)}
+  #counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 12px}
+}
+@media (max-width:1000px){
+  #bay{display:none} #rail{bottom:auto;width:288px}
+  #ident .icao{font-size:18px;padding:0 11px} #ident h1{font-size:16px}
+}
+@media (max-width:700px){
+  #cams{max-width:calc(100vw - 28px)}
+  #counts{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #bar>section{padding:8px 11px;gap:12px}
+  #ident h1{font-size:15px} #ident .icao{font-size:18px;padding:0 10px}
+  #rail{width:auto;max-width:calc(100vw - 130px)}
+}
+</style>
+
+<canvas id="gl"></canvas>
+
+<div id="rail">
+<header id="ident">
+  <div class="icao">KMEG</div>
+  <div class="txt">
+    <h1>Pushback to Wheels-Up</h1>
+    <p>Megastood Intl &middot; departures on <b>runway 09</b></p>
+  </div>
+</header>
+
+<section id="bay" aria-label="Flight progress strips">
+  <header><span class="lbl">Strip bay &middot; active</span><span class="n" id="bayn">0</span></header>
+  <div id="strips"></div>
+</section>
+</div>
+
+<aside id="cams" role="group" aria-label="Camera">
+  <button class="chip" data-cam="tower" aria-pressed="true">Tower</button>
+  <button class="chip" data-cam="threshold" aria-pressed="false">Threshold</button>
+  <button class="chip" data-cam="apron" aria-pressed="false">Apron</button>
+  <button class="chip" data-cam="plan" aria-pressed="false">Plan</button>
+  <button class="chip" data-cam="chase" aria-pressed="false">Chase</button>
+</aside>
+
+<footer id="bar">
+  <section>
+    <div class="stat"><span class="lbl">Elapsed</span><span class="v num" id="clock">00:00:00</span></div>
+    <div class="stat"><span class="lbl">Runway 09</span><span id="rwy" class="pill ok">Clear</span></div>
+    <div class="stat"><span class="lbl">Airborne</span><span class="v num" id="dep">0<span style="color:var(--ink3)">/100</span></span>
+      <div class="meter"><i id="depbar" style="width:0%"></i></div></div>
+  </section>
+  <section>
+    <div id="counts">
+      <div class="c"><span class="lbl">At stand</span><span class="v num" id="c-park">100</span></div>
+      <div class="c"><span class="lbl">Pushback</span><span class="v num" id="c-push">0</span></div>
+      <div class="c"><span class="lbl">Taxiing</span><span class="v num" id="c-taxi">0</span></div>
+      <div class="c"><span class="lbl">Holding short</span><span class="v num" id="c-hold">0</span></div>
+      <div class="c"><span class="lbl">Departing</span><span class="v num" id="c-roll">0</span></div>
+      <div class="c"><span class="lbl">Min hull gap</span><span class="v num good" id="sepv">&mdash;</span></div>
+      <div class="c"><span class="lbl">Conflicts</span><span class="v num" id="confl">0</span></div>
+    </div>
+  </section>
+  <section>
+    <div class="stat"><span class="lbl">Speed <span class="num" id="tsv">30&times;</span></span>
+      <input type="range" id="ts" min="1" max="120" step="1" value="30" aria-label="Simulation speed multiplier"></div>
+    <button class="act" id="pause">Pause</button>
+    <button class="act" id="reset">Reset</button>
+  </section>
+</footer>
+
+<div id="splash"><div class="t">Building airfield</div><div class="b"><i></i></div></div>
+<div id="err"></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   Pushback to Wheels-Up  —  KMEG ground movement simulation
+   Zero dependencies. Raw WebGL, flat-shaded, fully opaque:
+   the fragment shader writes alpha 1.0, blending is never enabled,
+   and the depth buffer resolves every surface. Nothing is see-through.
+   ===================================================================== */
+
+/* ------------------------------ math ------------------------------- */
+function m4mul(a,b,o){
+  o=o||new Float32Array(16);
+  for(let c=0;c<4;c++)for(let r=0;r<4;r++){
+    let s=0; for(let k=0;k<4;k++) s+=a[k*4+r]*b[c*4+k];
+    o[c*4+r]=s;
+  }
+  return o;
+}
+function m4persp(fovy,asp,n,f){
+  const t=1/Math.tan(fovy/2), o=new Float32Array(16);
+  o[0]=t/asp; o[5]=t; o[10]=(f+n)/(n-f); o[11]=-1; o[14]=2*f*n/(n-f);
+  return o;
+}
+function m4look(e,c,up){
+  let zx=e[0]-c[0], zy=e[1]-c[1], zz=e[2]-c[2];
+  let l=Math.hypot(zx,zy,zz)||1; zx/=l; zy/=l; zz/=l;
+  let xx=up[1]*zz-up[2]*zy, xy=up[2]*zx-up[0]*zz, xz=up[0]*zy-up[1]*zx;
+  l=Math.hypot(xx,xy,xz)||1; xx/=l; xy/=l; xz/=l;
+  const yx=zy*xz-zz*xy, yy=zz*xx-zx*xz, yz=zx*xy-zy*xx;
+  const o=new Float32Array(16);
+  o[0]=xx; o[1]=yx; o[2]=zx; o[3]=0;
+  o[4]=xy; o[5]=yy; o[6]=zy; o[7]=0;
+  o[8]=xz; o[9]=yz; o[10]=zz; o[11]=0;
+  o[12]=-(xx*e[0]+xy*e[1]+xz*e[2]);
+  o[13]=-(yx*e[0]+yy*e[1]+yz*e[2]);
+  o[14]=-(zx*e[0]+zy*e[1]+zz*e[2]);
+  o[15]=1;
+  return o;
+}
+const clamp=(v,a,b)=>v<a?a:(v>b?b:v);
+const lerp=(a,b,t)=>a+(b-a)*t;
+function angLerp(a,b,t){ let d=((b-a+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI; return a+d*t; }
+function angStep(a,b,mx){ let d=((b-a+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
+  if(d>mx)d=mx; if(d<-mx)d=-mx; return a+d; }
+
+/* deterministic RNG so every run is reproducible and reviewable */
+let _seed=0x5eed1a7;
+function rnd(){ _seed^=_seed<<13; _seed^=_seed>>>17; _seed^=_seed<<5; _seed>>>=0; return _seed/4294967296; }
+function rndRange(a,b){ return a+(b-a)*rnd(); }
+function rndInt(n){ return Math.floor(rnd()*n)%n; }
+function reseed(s){ _seed=s>>>0 || 1; }
+
+/* ------------------------- baked flat lighting ---------------------- */
+const SUN=(function(){ const v=[0.42,0.80,0.43], l=Math.hypot(v[0],v[1],v[2]); return [v[0]/l,v[1]/l,v[2]/l]; })();
+function shadeF(nx,ny,nz){
+  const d=Math.max(0,nx*SUN[0]+ny*SUN[1]+nz*SUN[2]);
+  const sky=0.5+0.5*ny;
+  return Math.min(1.18, 0.34+0.16*sky+0.56*d);
+}
+const hex=(h)=>[parseInt(h.slice(1,3),16)/255,parseInt(h.slice(3,5),16)/255,parseInt(h.slice(5,7),16)/255];
+
+/* ----------------------------- mesh builder ------------------------- */
+/* Two flavours: STATIC (lighting baked into the colour at build time)
+   and TEMPLATE (normals kept, shaded per frame as aircraft rotate).    */
+function Mesh(keepNormals){
+  return {pos:[], col:[], nrm:keepNormals?[]:null, keep:!!keepNormals};
+}
+function pushV(m,x,y,z,nx,ny,nz,c){
+  m.pos.push(x,y,z);
+  if(m.keep){ m.nrm.push(nx,ny,nz); m.col.push(c[0],c[1],c[2]); }
+  else { const f=shadeF(nx,ny,nz); m.col.push(c[0]*f,c[1]*f,c[2]*f); }
+}
+function tri(m,a,b,c,col){
+  const ux=b[0]-a[0],uy=b[1]-a[1],uz=b[2]-a[2];
+  const vx=c[0]-a[0],vy=c[1]-a[1],vz=c[2]-a[2];
+  let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
+  const l=Math.hypot(nx,ny,nz)||1; nx/=l; ny/=l; nz/=l;
+  pushV(m,a[0],a[1],a[2],nx,ny,nz,col);
+  pushV(m,b[0],b[1],b[2],nx,ny,nz,col);
+  pushV(m,c[0],c[1],c[2],nx,ny,nz,col);
+}
+function quad(m,a,b,c,d,col){ tri(m,a,b,c,col); tri(m,a,c,d,col); }
+
+/* axis-aligned box, centre + half-extents, optional distinct top colour */
+function box(m,cx,cy,cz,hx,hy,hz,col,top){
+  const x0=cx-hx,x1=cx+hx,y0=cy-hy,y1=cy+hy,z0=cz-hz,z1=cz+hz,t=top||col;
+  quad(m,[x0,y1,z1],[x1,y1,z1],[x1,y1,z0],[x0,y1,z0],t);          // top
+  quad(m,[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1],col);        // bottom
+  quad(m,[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1],col);        // +z
+  quad(m,[x1,y0,z0],[x0,y0,z0],[x0,y1,z0],[x1,y1,z0],col);        // -z
+  quad(m,[x1,y0,z1],[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],col);        // +x
+  quad(m,[x0,y0,z0],[x0,y0,z1],[x0,y1,z1],[x0,y1,z0],col);        // -x
+}
+/* horizontal ground patch (always faces up) */
+function slab(m,x0,x1,z0,z1,y,col){
+  quad(m,[x0,y,z1],[x1,y,z1],[x1,y,z0],[x0,y,z0],col);
+}
+/* tube along X from x0..x1, radius may taper r0->r1 */
+function tubeX(m,x0,x1,r0,r1,seg,col,cy,cz,squashY){
+  cy=cy||0; cz=cz||0; const sy=squashY||1;
+  for(let i=0;i<seg;i++){
+    const a0=i/seg*Math.PI*2, a1=(i+1)/seg*Math.PI*2;
+    const c0=Math.cos(a0),s0=Math.sin(a0),c1=Math.cos(a1),s1=Math.sin(a1);
+    const p00=[x0,cy+c0*r0*sy,cz+s0*r0], p01=[x0,cy+c1*r0*sy,cz+s1*r0];
+    const p10=[x1,cy+c0*r1*sy,cz+s0*r1], p11=[x1,cy+c1*r1*sy,cz+s1*r1];
+    if(r0>1e-4&&r1>1e-4) quad(m,p00,p10,p11,p01,col);
+    else if(r0>1e-4) tri(m,p00,p10,p01,col);
+    else tri(m,p10,p11,p01,col);
+  }
+}
+/* tube along Y (towers, gear legs) */
+function tubeY(m,cx,cz,y0,y1,r0,r1,seg,col){
+  for(let i=0;i<seg;i++){
+    const a0=i/seg*Math.PI*2,a1=(i+1)/seg*Math.PI*2;
+    const p00=[cx+Math.cos(a0)*r0,y0,cz+Math.sin(a0)*r0];
+    const p01=[cx+Math.cos(a1)*r0,y0,cz+Math.sin(a1)*r0];
+    const p10=[cx+Math.cos(a0)*r1,y1,cz+Math.sin(a0)*r1];
+    const p11=[cx+Math.cos(a1)*r1,y1,cz+Math.sin(a1)*r1];
+    quad(m,p00,p10,p11,p01,col);
+  }
+  const cap=[]; for(let i=0;i<seg;i++){const a=i/seg*Math.PI*2;cap.push([cx+Math.cos(a)*r1,y1,cz+Math.sin(a)*r1]);}
+  for(let i=1;i<seg-1;i++) tri(m,cap[0],cap[i],cap[i+1],col);
+}
+/* flat plate in the XZ plane given four corners at height y, e.g. wings */
+function plate(m,pts,y,th,col){
+  const n=pts.length, up=[],dn=[];
+  for(const p of pts){ up.push([p[0],y+th,p[1]]); dn.push([p[0],y-th,p[1]]); }
+  for(let i=1;i<n-1;i++){ tri(m,up[0],up[i],up[i+1],col); tri(m,dn[0],dn[i+1],dn[i],col); }
+  for(let i=0;i<n;i++){ const j=(i+1)%n; quad(m,dn[i],dn[j],up[j],up[i],col); }
+}
+/* vertical fin: polygon in the XY plane, extruded in Z */
+function fin(m,pts,z,th,col){
+  const n=pts.length,a=[],b=[];
+  for(const p of pts){ a.push([p[0],p[1],z+th]); b.push([p[0],p[1],z-th]); }
+  for(let i=1;i<n-1;i++){ tri(m,a[0],a[i],a[i+1],col); tri(m,b[0],b[i+1],b[i],col); }
+  for(let i=0;i<n;i++){ const j=(i+1)%n; quad(m,b[i],b[j],a[j],a[i],col); }
+}
+
+/* ------------------------------- WebGL ------------------------------ */
+const canvas=document.getElementById("gl");
+let gl=canvas.getContext("webgl",{antialias:true,alpha:false,depth:true})
+     ||canvas.getContext("experimental-webgl",{antialias:true,alpha:false,depth:true});
+if(!gl){
+  const e=document.getElementById("err");
+  e.style.display="block";
+  e.innerHTML="<h2>WebGL unavailable</h2><p>This simulation renders with WebGL, which this browser or "+
+    "device has turned off. Enable hardware acceleration, or open the page in another browser, and reload.</p>";
+  document.getElementById("splash").classList.add("done");
+  throw new Error("no webgl");
+}
+const VS=`attribute vec3 aPos; attribute vec3 aCol; uniform mat4 uVP;
+varying vec3 vCol; void main(){ vCol=aCol; gl_Position=uVP*vec4(aPos,1.0); }`;
+/* alpha is a literal 1.0 — the scene is opaque by construction */
+const FS=`precision mediump float; varying vec3 vCol;
+void main(){ gl_FragColor=vec4(vCol,1.0); }`;
+function compile(type,src){
+  const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const prog=gl.createProgram();
+gl.attachShader(prog,compile(gl.VERTEX_SHADER,VS));
+gl.attachShader(prog,compile(gl.FRAGMENT_SHADER,FS));
+gl.bindAttribLocation(prog,0,"aPos"); gl.bindAttribLocation(prog,1,"aCol");
+gl.linkProgram(prog);
+if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+const uVP=gl.getUniformLocation(prog,"uVP");
+gl.enableVertexAttribArray(0); gl.enableVertexAttribArray(1);
+gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL);
+gl.disable(gl.BLEND);                 // never blend: no transparency anywhere
+gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
+gl.clearColor(0.561,0.706,0.824,1);
+
+function makeBuffer(mesh){
+  const n=mesh.pos.length/3;
+  const posB=gl.createBuffer(), colB=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,posB); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(mesh.pos),gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,colB); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(mesh.col),gl.STATIC_DRAW);
+  return {posB,colB,count:n};
+}
+function drawBuffer(b,count){
+  if(!count&&count!==0) count=b.count;
+  if(count<=0) return;
+  gl.bindBuffer(gl.ARRAY_BUFFER,b.posB); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,b.colB); gl.vertexAttribPointer(1,3,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.TRIANGLES,0,count);
+}
+</script>
+
+<script>
+"use strict";
+/* ======================= KMEG airfield layout (metres) ================
+   Runway 09/27 on z=0, 3200 x 45. Parallel taxiway ALPHA 170 m north,
+   one-way westbound to the 09 threshold. Four apron taxilanes feed an
+   eastern collector. 100 nose-in stands, 25 per row.
+   Every movement runs the same direction of flow, so the movement graph
+   is acyclic: aircraft only ever wait for something strictly ahead of
+   them, which is what makes the locking below deadlock-free.
+   ===================================================================== */
+const RWY={x0:-1600,x1:1600,hw:22.5,shoulder:38};
+const TWY_A_Z=170, TWY_HW=14;
+const COLLECT_X=1700;
+const LANE_Z=[300,540,780,1020];
+const STAND_OFF=105;              // stand centre north of its taxilane
+const STANDS_PER_ROW=25, STAND_DX=105, STAND_X0=-1260;
+const APRON={x0:-1360,x1:1730,z0:282,z1:1260};
+const HOLD=[-1690,TWY_A_Z], LINK=[-1690,58], LINEUP=[-1520,0];
+const LANE_X_W=-1340, LANE_X_E=COLLECT_X;
+
+const C={
+  grass:hex("#5E7A48"), grassDry:hex("#6E8452"),
+  asphalt:hex("#383E42"), taxi:hex("#4E5559"), concrete:hex("#7C7C72"),
+  joint:hex("#6E6E65"), shoulder:hex("#565043"), light:hex("#E4E4DA"),
+  white:hex("#E9E9E3"), yellow:hex("#D6B03C"), red:hex("#A33A2C"),
+  bldg:hex("#A7ADB1"), bldgTop:hex("#7E858A"), glass:hex("#2B3A45"),
+  bldg2:hex("#9AA0A4"), hangar:hex("#8E939A"), hangarTop:hex("#6B7176"),
+  towerShaft:hex("#B6AEA2"), towerCab:hex("#2B3A45"), towerTop:hex("#5A6167"),
+  bridge:hex("#C2C6C8"), trunk:hex("#4A3B2C"), leaf:hex("#3E5C34"), leaf2:hex("#48693C")
+};
+
+/* rectangle subtraction, so grass never sits underneath pavement
+   (coplanar overlap of two different colours is what causes z-fighting) */
+function subRect(list,h){
+  const out=[];
+  for(const r of list){
+    if(h.x1<=r.x0||h.x0>=r.x1||h.z1<=r.z0||h.z0>=r.z1){ out.push(r); continue; }
+    if(h.z0>r.z0) out.push({x0:r.x0,x1:r.x1,z0:r.z0,z1:h.z0});
+    if(h.z1<r.z1) out.push({x0:r.x0,x1:r.x1,z0:h.z1,z1:r.z1});
+    const z0=Math.max(r.z0,h.z0), z1=Math.min(r.z1,h.z1);
+    if(h.x0>r.x0) out.push({x0:r.x0,x1:h.x0,z0,z1});
+    if(h.x1<r.x1) out.push({x0:h.x1,x1:r.x1,z0,z1});
+  }
+  return out;
+}
+
+/* Pavement is cut into non-overlapping rectangles per surface type: two
+   coplanar rectangles of different colours would z-fight, and the grass
+   is subtracted around all of them for the same reason. */
+const PAVE_ASPHALT=[                                   // runway + its turn-on
+  {x0:RWY.x0-60,x1:RWY.x1+60,z0:-RWY.shoulder,z1:RWY.shoulder},
+  {x0:-1740,x1:-1520,z0:-RWY.shoulder,z1:62}
+];
+const PAVE_TAXI=[                                      // taxiway ALPHA + links
+  {x0:-1740,x1:1740,z0:TWY_A_Z-TWY_HW,z1:TWY_A_Z+TWY_HW},
+  {x0:-1740,x1:-1640,z0:62,z1:TWY_A_Z-TWY_HW},
+  {x0:COLLECT_X-TWY_HW,x1:COLLECT_X+TWY_HW,z0:TWY_A_Z+TWY_HW,z1:APRON.z0}
+];
+const MAINT={x0:-1800,x1:-1380,z0:300,z1:730};
+const PAVE_CONCRETE=[{x0:APRON.x0,x1:APRON.x1,z0:APRON.z0,z1:APRON.z1},MAINT];
+const PAVE_ALL=PAVE_ASPHALT.concat(PAVE_TAXI,PAVE_CONCRETE);
+
+/* ---------------------------- scenery ------------------------------- */
+function buildScenery(){
+  const base=Mesh(false), mark=Mesh(false);
+
+  /* grass: one huge rect minus every pavement footprint */
+  let grass=[{x0:-11000,x1:11000,z0:-9000,z1:11000}];
+  for(const p of PAVE_ALL) grass=subRect(grass,p);
+  for(const g of grass) slab(base,g.x0,g.x1,g.z0,g.z1,0,C.grass);
+  /* mown strips either side of the runway, texture on an otherwise flat field */
+  for(let i=0;i<30;i++){
+    const x=-1780+i*122;
+    if(i%2){ slab(mark,x,x+61,-190,-RWY.shoulder,0,C.grassDry);
+             slab(mark,x,x+61,RWY.shoulder,TWY_A_Z-TWY_HW,0,C.grassDry); }
+  }
+  for(const p of PAVE_ASPHALT)  slab(base,p.x0,p.x1,p.z0,p.z1,0,C.asphalt);
+  for(const p of PAVE_TAXI)     slab(base,p.x0,p.x1,p.z0,p.z1,0,C.taxi);
+  for(const p of PAVE_CONCRETE) slab(base,p.x0,p.x1,p.z0,p.z1,0,C.concrete);
+  /* apron slab joints: the grid that makes concrete read as concrete */
+  for(let x=APRON.x0+40;x<APRON.x1;x+=40) slab(mark,x-0.35,x+0.35,APRON.z0,APRON.z1,0,C.joint);
+  for(let z=APRON.z0+40;z<APRON.z1;z+=40) slab(mark,APRON.x0,APRON.x1,z-0.35,z+0.35,0,C.joint);
+  /* runway shoulder hatching */
+  slab(mark,RWY.x0,RWY.x1,-RWY.shoulder,-RWY.hw,0,C.shoulder);
+  slab(mark,RWY.x0,RWY.x1,RWY.hw,RWY.shoulder,0,C.shoulder);
+
+  /* ---- runway markings (decals) ---- */
+  const M=(x0,x1,z0,z1,c)=>slab(mark,x0,x1,z0,z1,0,c||C.white);
+  M(RWY.x0,RWY.x1,-RWY.hw,-RWY.hw+0.9);          // edge lines
+  M(RWY.x0,RWY.x1,RWY.hw-0.9,RWY.hw);
+  for(let x=RWY.x0+80;x<RWY.x1-80;x+=50) M(x,x+30,-0.45,0.45);   // centreline
+  for(let k=0;k<8;k++){                                          // piano keys
+    const z=-18+k*4.6; M(RWY.x0+8,RWY.x0+53,z,z+1.8); M(RWY.x1-53,RWY.x1-8,z,z+1.8);
+  }
+  M(RWY.x0+8,RWY.x0+10,-RWY.hw,RWY.hw);                          // threshold bars
+  M(RWY.x1-10,RWY.x1-8,-RWY.hw,RWY.hw);
+  for(const s of [1,-1]){                                        // aiming points
+    M(RWY.x0+400,RWY.x0+445,s*8,s*14); M(RWY.x1-445,RWY.x1-400,s*8,s*14);
+  }
+  for(const d of [150,220,290]) for(const s of [1,-1]){          // touchdown zone
+    M(RWY.x0+d,RWY.x0+d+22,s*4,s*7); M(RWY.x1-d-22,RWY.x1-d,s*4,s*7);
+  }
+  /* blocky runway designators, read from each approach direction */
+  const GLY={"0":["111","101","101","101","111"],"2":["111","001","111","100","111"],
+             "7":["111","001","010","010","100"],"9":["111","101","111","001","111"]};
+  function digits(str,cx,cz,up){   // up=+1 -> glyph top points east
+    const cell=4.0, gw=3*cell, gh=5*cell, gap=3;
+    let off=-(str.length*gw+(str.length-1)*gap)/2;
+    for(const ch of str){
+      const rows=GLY[ch];
+      for(let r=0;r<5;r++) for(let c=0;c<3;c++){
+        if(rows[r][c]!=="1") continue;
+        const along=(gh/2-(r+0.5)*cell)*up;                  // along runway axis
+        const across=((off+(c+0.5)*cell)-0)*up;              // across runway
+        const x=cx+along, z=cz+across;
+        M(x-cell/2,x+cell/2,z-cell/2,z+cell/2);
+      }
+      off+=gw+gap;
+    }
+  }
+  digits("09",RWY.x0+95,0,1);
+  digits("27",RWY.x1-95,0,-1);
+
+  /* ---- taxiway centrelines and hold-short bars (decals) ---- */
+  const Y=(x0,x1,z0,z1)=>slab(mark,x0,x1,z0,z1,0,C.yellow);
+  Y(-1690,1716,TWY_A_Z-0.4,TWY_A_Z+0.4);                          // ALPHA
+  Y(COLLECT_X-0.4,COLLECT_X+0.4,TWY_A_Z,LANE_Z[3]);               // collector
+  for(const lz of LANE_Z) Y(LANE_X_W,COLLECT_X,lz-0.4,lz+0.4);    // taxilanes
+  for(let r=0;r<4;r++) for(let i=0;i<STANDS_PER_ROW;i++){
+    const x=STAND_X0+i*STAND_DX;
+    Y(x-0.4,x+0.4,LANE_Z[r],LANE_Z[r]+STAND_OFF);                 // stand lead-in
+    Y(x-9,x+9,LANE_Z[r]+STAND_OFF+16,LANE_Z[r]+STAND_OFF+17.2);   // stop bar
+  }
+  /* hold short of runway 09: the mandatory ladder */
+  for(let k=0;k<4;k++){ const x=-1668-k*2.4; Y(x,x+1.2,TWY_A_Z-TWY_HW,TWY_A_Z+TWY_HW); }
+  Y(-1652,-1650,TWY_A_Z-TWY_HW,TWY_A_Z+TWY_HW);
+  slab(mark,-1662,-1656,TWY_A_Z+TWY_HW+1,TWY_A_Z+TWY_HW+7,0,C.red);
+  /* threshold link centreline */
+  Y(-1690.4,-1689.6,62,TWY_A_Z);
+  Y(-1690,-1560,-0.4,0.4);
+
+  /* ---- edge lighting: small blocks, no glow, still reads at distance ---- */
+  for(let x=RWY.x0+30;x<=RWY.x1-30;x+=60) for(const sgn of [1,-1])
+    box(base,x,0.5,sgn*(RWY.hw+2.5),1.1,0.55,1.1,C.light,C.light);
+  for(let x=RWY.x0+60;x<=RWY.x1-60;x+=120)
+    box(base,x,0.35,0,0.9,0.4,0.9,C.light,C.light);
+
+  /* ---- terminal, concourses, jet bridges ---- */
+  box(base,0,14,1332,1210,14,80,C.bldg,C.bldgTop);
+  box(base,0,21.5,1332,1150,3.4,74,C.glass,C.bldgTop);            // clerestory band
+  for(let i=-5;i<=5;i++) box(base,i*210,7,1250,26,7,3,C.bldg2,C.bldgTop);  // landside piers
+  for(let r=0;r<4;r++){
+    const cz=LANE_Z[r]+STAND_OFF+52;
+    box(base,0,7.5,cz,1320,7.5,18,C.bldg2,C.bldgTop);             // concourse pier
+    box(base,0,10.5,cz,1290,2.2,15,C.glass,C.bldgTop);
+    for(let i=0;i<STANDS_PER_ROW;i++){                            // jet bridges
+      const x=STAND_X0+i*STAND_DX;
+      box(base,x,6.2,cz-24,3.2,2.6,16,C.bridge,C.bldgTop);
+      box(base,x,3.1,cz-40,2.4,3.1,2.4,C.bldg2);
+    }
+  }
+  /* ---- control tower, overlooking runway and apron ---- */
+  tubeY(base,240,232,0,54,10,7.2,16,C.towerShaft);
+  box(base,240,58,232,11,4.6,11,C.towerCab,C.towerTop);
+  box(base,240,63.4,232,12,1.1,12,C.towerTop);
+  tubeY(base,240,232,64.5,78,0.7,0.5,6,C.towerTop);
+  box(base,240,6,205,16,6,10,C.bldg,C.bldgTop);
+  /* radar head */
+  tubeY(base,-1500,760,0,26,2.2,1.6,8,C.bldg2);
+  box(base,-1500,28,760,7,3.5,1.2,C.bldg2,C.bldgTop);
+  /* ---- maintenance hangars, on their own pavement west of the apron ---- */
+  for(let i=0;i<2;i++){
+    const cx=-1690+i*206;
+    box(base,cx,17,560,98,17,80,C.hangar,C.hangarTop);
+    box(base,cx,18.5,479,98,15,2,C.glass);          // hangar door
+  }
+  for(let x=MAINT.x0+40;x<MAINT.x1;x+=40) slab(mark,x-0.35,x+0.35,MAINT.z0,MAINT.z1,0,C.joint);
+  /* ---- perimeter tree line, for scale beyond the fence ---- */
+  reseed(0x7a1b0c);
+  for(let i=0;i<220;i++){
+    const side=rnd()<0.5?-1:1;
+    const x=rndRange(-4200,4200);
+    const z=side<0?rndRange(-2400,-620):rndRange(1700,3400);
+    if(Math.abs(x)<2100&&side<0&&z>-700) continue;
+    const h=rndRange(11,21), r=h*0.36;
+    tubeY(base,x,z,0,h*0.32,1.0,0.8,5,C.trunk);
+    tubeY(base,x,z,h*0.30,h,r,0.2,6,rnd()<0.5?C.leaf:C.leaf2);
+  }
+  return {base:makeBuffer(base),mark:makeBuffer(mark)};
+}
+</script>
+
+<script>
+"use strict";
+/* ========================= aircraft templates =========================
+   Local frame: +X nose, +Y up, +Z starboard. y=0 is the wheel contact
+   plane, so a parked aircraft sits exactly on the pavement.
+   Normals are kept and re-shaded each frame as the aircraft rotates.
+   ===================================================================== */
+const FLEET={
+  H:{len:64,span:60,fuseR:3.2,gear:4.2,finH:16,engR:1.9,engZ:0.30,vr:78,cruise:118,
+     types:["B77W","A359","B788","B744"],cat:"Heavy",wake:"H"},
+  M:{len:38,span:36,fuseR:2.0,gear:2.7,finH:10.4,engR:1.25,engZ:0.32,vr:70,cruise:105,
+     types:["A320","B738","A21N","B39M"],cat:"Medium",wake:"M"},
+  L:{len:31,span:26,fuseR:1.5,gear:2.1,finH:8.2,engR:1.0,engZ:0.34,vr:62,cruise:96,
+     types:["E195","CRJ9","AT76","E175"],cat:"Light",wake:"L"}
+};
+const LIVERY=[
+  {icao:"MEG",name:"Megastood",tail:"#E8A317",body:"#F2F2EE"},
+  {icao:"HVN",name:"Havenair",tail:"#2E6FB7",body:"#EDF0F3"},
+  {icao:"SLT",name:"Saltline",tail:"#C7422F",body:"#F4F1EC"},
+  {icao:"ORB",name:"Orbital",tail:"#6B4CA8",body:"#EFEEF4"},
+  {icao:"KIT",name:"Kittiwake",tail:"#12897A",body:"#F0F4F2"},
+  {icao:"PNT",name:"Pinnacle",tail:"#33475B",body:"#E9ECEE"},
+  {icao:"VRD",name:"Verdant",tail:"#4C8B2B",body:"#F0F3EC"},
+  {icao:"AUR",name:"Aurora",tail:"#B0559A",body:"#F4EFF2"}
+];
+const SIDS=["BAROK2C","KESTA3B","LUMEN1A","TORVA4D","SIRME2F"];
+
+function buildAircraft(kind,liv){
+  const F=FLEET[kind], m=Mesh(true);
+  const L=F.len, R=F.fuseR, y0=F.gear+R, sp=F.span/2;
+  const body=hex(liv.body), tail=hex(liv.tail);
+  const belly=[body[0]*0.72,body[1]*0.74,body[2]*0.78];
+  const wing=hex("#C3C7CB"), dark=hex("#31383D"), eng=hex("#B9BEC2");
+  const SEG=9;
+  /* fuselage + nose + tail cone */
+  tubeX(m,-L*0.40,L*0.34,R,R,SEG,body,y0,0);
+  tubeX(m,L*0.34,L*0.50,R,R*0.16,SEG,body,y0,0);
+  tubeX(m,-L*0.40,-L*0.50,R,R*0.30,SEG,tail,y0+R*0.42,0);
+  box(m,L*0.40,y0+R*0.62,0,L*0.035,R*0.30,R*0.62,dark);         // flight deck
+  /* wings, swept back from the root */
+  for(const s of [1,-1]){
+    plate(m,[[L*0.10,s*R*0.92],[-L*0.10,s*R*0.92],[-L*0.20,s*sp],[-L*0.09,s*sp]],
+          y0-R*0.55,R*0.14,wing);
+    /* engine pylon + nacelle */
+    const ez=s*sp*F.engZ*2.0;
+    tubeX(m,-L*0.02,L*0.12,F.engR,F.engR*0.92,SEG,eng,y0-R*1.05,ez);
+    tubeX(m,L*0.12,L*0.135,F.engR*0.92,F.engR*0.80,6,dark,y0-R*1.05,ez);
+    box(m,L*0.03,y0-R*0.80,ez,L*0.05,R*0.30,F.engR*0.22,wing);
+    if(kind==="H"){                                              // outboard pair
+      const e2=s*sp*0.62;
+      tubeX(m,-L*0.06,L*0.07,F.engR*0.94,F.engR*0.86,SEG,eng,y0-R*1.0,e2);
+      box(m,-L*0.02,y0-R*0.78,e2,L*0.05,R*0.28,F.engR*0.20,wing);
+    }
+    /* horizontal stabiliser */
+    plate(m,[[-L*0.40,s*R*0.55],[-L*0.47,s*R*0.55],[-L*0.50,s*sp*0.36],[-L*0.44,s*sp*0.36]],
+          y0+R*0.30,R*0.10,wing);
+  }
+  /* vertical fin, carrying the airline colour */
+  fin(m,[[-L*0.36,y0+R*0.75],[-L*0.50,y0+R*0.75],[-L*0.50,y0+R*0.75+F.finH],
+         [-L*0.40,y0+R*0.75+F.finH]],0,R*0.13,tail);
+  /* undercarriage */
+  tubeY(m,L*0.33,0,0,y0-R*0.85,0.34,0.34,5,dark);
+  for(const s of [1,-1]) tubeY(m,-L*0.03,s*R*1.05,0,y0-R*0.95,0.46,0.46,5,dark);
+  /* belly shading strip */
+  tubeX(m,-L*0.36,L*0.30,R*0.999,R*0.999,SEG,belly,y0,0,0.34);
+  return m;
+}
+
+/* ===================== taxi path with rounded corners =================
+   A route is a polyline through movement-graph nodes. Corners are
+   replaced by quadratic arcs so aircraft track smoothly, and each node
+   keeps the arc-length at which it is passed — that is what the node
+   locks below are keyed on.
+   ===================================================================== */
+const TAXI_V=16.0, TURN_A=1.15, ACC=1.0, DEC=1.5;
+function buildPath(pts,radius,vmax){
+  vmax=vmax||TAXI_V;
+  const X=[],Z=[],VL=[],nodeS=[],nodeIdx=[],STRAIGHT=30;
+  const emit=(x,z,v)=>{ X.push(x); Z.push(z); VL.push(v); };
+  /* walk a straight run from the last emitted point to (x,z), dropping
+     samples every STRAIGHT metres so the run keeps its own speed limit */
+  const run=(x,z)=>{
+    const lx=X[X.length-1], lz=Z[Z.length-1];
+    const d=Math.hypot(x-lx,z-lz);
+    const k=Math.floor(d/STRAIGHT);
+    for(let q=1;q<=k;q++){ const t=q*STRAIGHT/d; if(t>=1) break; emit(lerp(lx,x,t),lerp(lz,z,t),vmax); }
+  };
+  emit(pts[0][0],pts[0][1],vmax); nodeIdx.push(0);
+  for(let i=1;i<pts.length-1;i++){
+    const p=pts[i], a=pts[i-1], b=pts[i+1];
+    let ux=p[0]-a[0], uz=p[1]-a[1]; const ul=Math.hypot(ux,uz)||1; ux/=ul; uz/=ul;
+    let vx=b[0]-p[0], vz=b[1]-p[1]; const vl=Math.hypot(vx,vz)||1; vx/=vl; vz/=vl;
+    const dot=clamp(ux*vx+uz*vz,-1,1), turn=Math.acos(dot);
+    if(turn<0.035){ run(p[0],p[1]); emit(p[0],p[1],vmax); nodeIdx.push(X.length-1); continue; }
+    const r=Math.min(radius,ul*0.45,vl*0.45);
+    const A=[p[0]-ux*r,p[1]-uz*r], B=[p[0]+vx*r,p[1]+vz*r];
+    const arcR=Math.max(8,r/Math.max(0.08,Math.tan(turn/2)));
+    const vt=clamp(Math.sqrt(TURN_A*arcR),3.2,vmax);
+    const K=9;
+    run(A[0],A[1]);
+    for(let k=0;k<=K;k++){
+      const t=k/K, it=1-t;
+      emit(it*it*A[0]+2*it*t*p[0]+t*t*B[0], it*it*A[1]+2*it*t*p[1]+t*t*B[1], vt);
+      if(k===Math.floor(K/2)) nodeIdx.push(X.length-1);
+    }
+  }
+  const last=pts[pts.length-1];
+  run(last[0],last[1]);
+  emit(last[0],last[1],vmax); nodeIdx.push(X.length-1);
+
+  const n=X.length, S=new Float64Array(n), H=new Float64Array(n);
+  for(let i=1;i<n;i++) S[i]=S[i-1]+Math.hypot(X[i]-X[i-1],Z[i]-Z[i-1]);
+  for(let i=0;i<n-1;i++) H[i]=Math.atan2(Z[i+1]-Z[i],X[i+1]-X[i]);
+  H[n-1]=H[n-2]||0;
+  for(let i=n-2;i>=0;i--){                       // allow braking into turns
+    const ds=S[i+1]-S[i];
+    VL[i]=Math.min(VL[i],Math.sqrt(VL[i+1]*VL[i+1]+2*DEC*ds));
+  }
+  for(const idx of nodeIdx) nodeS.push(S[idx]);
+  return {X,Z,S,H,VL,n,len:S[n-1],nodeS};
+}
+function pathAt(p,s,out){
+  s=clamp(s,0,p.len);
+  let lo=0,hi=p.n-1;
+  while(hi-lo>1){ const md=(lo+hi)>>1; if(p.S[md]<=s) lo=md; else hi=md; }
+  const seg=p.S[hi]-p.S[lo], t=seg>1e-9?(s-p.S[lo])/seg:0;
+  out.x=lerp(p.X[lo],p.X[hi],t);
+  out.z=lerp(p.Z[lo],p.Z[hi],t);
+  out.h=angLerp(p.H[lo],p.H[hi],t);
+  out.v=Math.min(p.VL[lo],p.VL[hi]);
+  return out;
+}
+</script>
+
+<script>
+"use strict";
+/* ============================ separation ==============================
+   Three independent rules keep aircraft apart, and none of them may be
+   violated for the run to be valid:
+
+   1. NODE LOCKS  — every junction of the movement graph is a mutex. An
+      aircraft may not enter a junction it does not own. Grants go to the
+      longest-waiting requester, so no lane starves. Because the flow is
+      one-way and acyclic, an aircraft only ever waits on something ahead
+      of it, so the lock graph can never contain a cycle: no deadlock.
+   2. IN-TRAIL  — each aircraft projects its own path forward and brakes
+      to keep hull + hull + 30 m clear of anything on it. This is
+      geometric, so it holds through turns and merges too.
+   3. RUNWAY  — a single exclusive resource, released only once the
+      departure is airborne, then held closed for the wake-turbulence
+      interval owed to the next departure.
+   ===================================================================== */
+const SIM_DT=0.25, INTRAIL_BUF=30, LOOKAHEAD=200, LOOK_STEP=10;
+const ROLL_ACC=2.2, PUSH_V=3.4, PUSH_DIST=STAND_OFF, STARTUP_T=22;
+const WAKE={HH:35,HM:75,HL:95,MH:30,MM:35,ML:55,LH:30,LM:30,LL:35};
+
+let nodes=[], nodeById=new Map();
+function mkNode(id,x,z,merge){
+  let n=nodeById.get(id);
+  if(n) return n;
+  n={id,x,z,merge:!!merge,owner:null,bestAc:null,bestWait:-1,bestPri:-1};
+  nodes.push(n); nodeById.set(id,n); return n;
+}
+const RUNWAY_GUARD={id:"RWY09",runway:true,x:HOLD[0],z:HOLD[1],owner:null,bestAc:null,bestWait:-1,bestPri:-1};
+
+/* ------------------------- route construction ----------------------- */
+const pathCache=new Map();
+function routeFor(r,i){
+  const key=r+":"+i;
+  if(pathCache.has(key)) return pathCache.get(key);
+  const lz=LANE_Z[r], pts=[], refs=[];
+  const add=(x,z,node)=>{ pts.push([x,z]); refs.push(node||null); };
+  add(STAND_X0+i*STAND_DX,lz,mkNode("L"+r+"_"+i,STAND_X0+i*STAND_DX,lz));
+  for(let j=i+1;j<STANDS_PER_ROW;j++){
+    const x=STAND_X0+j*STAND_DX; add(x,lz,mkNode("L"+r+"_"+j,x,lz));
+  }
+  /* C0..C2 are true merges: a taxilane joins the southbound collector
+     there. C3 is only the head of the collector, so it needs no box rule. */
+  add(COLLECT_X,lz,mkNode("C"+r,COLLECT_X,lz,r<3));
+  for(let k=r-1;k>=0;k--) add(COLLECT_X,LANE_Z[k],mkNode("C"+k,COLLECT_X,LANE_Z[k],k<3));
+  add(COLLECT_X,TWY_A_Z,mkNode("CJ",COLLECT_X,TWY_A_Z));
+  add(HOLD[0],HOLD[1],RUNWAY_GUARD);                    // hold short of 09
+  add(HOLD[0],0,null);                                  // turn onto centreline
+  add(RWY.x1+900,0,null);                               // roll out east
+  const path=buildPath(pts,45,TAXI_V);
+  const list=[];
+  for(let k=0;k<refs.length;k++) if(refs[k]) list.push({node:refs[k],s:path.nodeS[k]});
+  const out={path,list,sRunway:path.nodeS[refs.indexOf(RUNWAY_GUARD)+1]};
+  pathCache.set(key,out); return out;
+}
+function pushPathFor(r,i){
+  const x=STAND_X0+i*STAND_DX;
+  return buildPath([[x,LANE_Z[r]+STAND_OFF],[x,LANE_Z[r]]],10,PUSH_V);
+}
+
+/* ------------------------------- fleet ------------------------------ */
+let air=[], simT=0, departed=0, runway={owner:null,vacatedAt:-999,lastWake:"M",need:0};
+let conflictPairs=new Set(), minGap=Infinity, running=true;
+const tmp={x:0,z:0,h:0,v:0};
+
+function makeFleet(){
+  reseed(0x1CA0DEF);
+  nodes=[]; nodeById=new Map(); pathCache.clear();
+  RUNWAY_GUARD.owner=null; RUNWAY_GUARD.bestAc=null;
+  air=[]; simT=0; departed=0; conflictPairs=new Set(); minGap=Infinity;
+  runway={owner:null,vacatedAt:-999,lastWake:"M",need:0};
+
+  const slots=[];
+  for(let r=0;r<4;r++) for(let i=0;i<STANDS_PER_ROW;i++) slots.push([r,i]);
+  for(let k=slots.length-1;k>0;k--){ const j=rndInt(k+1); const t=slots[k]; slots[k]=slots[j]; slots[j]=t; }
+
+  for(let k=0;k<100;k++){
+    const [r,i]=slots[k];
+    const roll=rnd();
+    const kind=roll<0.20?"H":(roll<0.76?"M":"L");
+    const F=FLEET[kind], liv=LIVERY[rndInt(LIVERY.length)];
+    const route=routeFor(r,i);
+    const ac={
+      id:k, kind, F, liv, r0:r, i0:i,
+      type:F.types[rndInt(F.types.length)],
+      cs:liv.icao+String(110+rndInt(880)),
+      sid:SIDS[rndInt(SIDS.length)],
+      stand:(["A","B","C","D"][r])+String(i+1).padStart(2,"0"),
+      hull:Math.max(F.len,F.span)/2,
+      path:route.path, nodeList:route.list, sRunway:route.sRunway,
+      pushPath:pushPathFor(r,i),
+      offBlock: k<14 ? k*18+rndRange(0,6) : 252+(k-13)*62+rndRange(-9,9),
+      phase:"wait", s:0, v:0, idx:0, timer:0,
+      x:STAND_X0+i*STAND_DX, z:LANE_Z[r]+STAND_OFF, y:0,
+      h:Math.PI/2, pitch:0, bank:0,
+      owned:new Set(), reqNode:null, reqSince:0, stopLimit:Infinity,
+      slot:k, dirty:true, turnDir:(k%2?1:-1)
+    };
+    air.push(ac);
+  }
+}
+
+/* --------------------------- spatial grid --------------------------- */
+const GRID_CELL=150, grid=new Map();
+function gkey(x,z){ return ((Math.floor(x/GRID_CELL)+2048)<<12)|((Math.floor(z/GRID_CELL)+2048)&4095); }
+function rebuildGrid(){
+  grid.clear();
+  for(const a of air){
+    if(a.phase==="gone") continue;
+    const k=gkey(a.x,a.z); let b=grid.get(k);
+    if(!b){ b=[]; grid.set(k,b); } b.push(a);
+  }
+}
+const _nb=[];
+function neighbours(a,rad){ return neighboursAt(a.x,a.z,rad,a); }
+function neighboursAt(px,pz,rad,skip){
+  _nb.length=0;
+  const cx=Math.floor(px/GRID_CELL), cz=Math.floor(pz/GRID_CELL);
+  const span=Math.ceil(rad/GRID_CELL);
+  for(let dx=-span;dx<=span;dx++) for(let dz=-span;dz<=span;dz++){
+    const b=grid.get((((cx+dx)+2048)<<12)|(((cz+dz)+2048)&4095));
+    if(!b) continue;
+    for(const o of b){ if(o!==skip) _nb.push(o); }
+  }
+  return _nb;
+}
+
+/* --------------------- forward path sampling ------------------------ */
+const _sx=new Float64Array(40), _sz=new Float64Array(40);
+function lookAhead(a,maxD){
+  const p=a.path; let i=a.idx, n=0;
+  for(let d=LOOK_STEP; d<=maxD && n<40; d+=LOOK_STEP){
+    const t=a.s+d;
+    if(t>=p.len) break;
+    while(i<p.n-1&&p.S[i+1]<t) i++;
+    const seg=p.S[i+1]-p.S[i], u=seg>1e-9?(t-p.S[i])/seg:0;
+    _sx[n]=lerp(p.X[i],p.X[i+1],u); _sz[n]=lerp(p.Z[i],p.Z[i+1],u); n++;
+  }
+  return n;
+}
+const GROUND_PHASES={taxi:1,hold:1,lineup:1,roll:1};
+const PUSH_CLEAR=190;
+/* does o still have node n ahead of it on its own route? */
+function willUse(o,n){
+  for(const e of o.nodeList) if(e.node===n&&e.s>o.s-20) return true;
+  return false;
+}
+/* approve a push only if no moving aircraft is closing on that junction */
+function laneClearForPush(a,n){
+  const near=neighboursAt(n.x,n.z,PUSH_CLEAR,a);
+  for(const o of near){
+    if(!GROUND_PHASES[o.phase]) continue;
+    if(Math.hypot(o.x-n.x,o.z-n.z)>PUSH_CLEAR) continue;
+    if(!willUse(o,n)) continue;
+    return false;
+  }
+  return true;
+}
+
+/* ------------------------------- step -------------------------------
+   Order matters. In-trail limits are geometric and do not depend on who
+   holds which lock, so they are computed first; the lock requests then
+   use them to refuse any merge the aircraft could not clear.
+   -------------------------------------------------------------------- */
+const HULL_MAX=32;                          // largest hull radius in the fleet
+/* how far short of a junction an aircraft must stop: far enough that it
+   never intrudes on another branch's path through that junction */
+function blockBack(a){ return a.hull+HULL_MAX+INTRAIL_BUF+5; }
+
+function computeTrailLimit(a){
+  let limit=Infinity;
+  const near=neighbours(a,LOOKAHEAD+60);
+  if(!near.length) return limit;
+  let far=0;
+  for(const o of near){
+    const d=Math.hypot(o.x-a.x,o.z-a.z);
+    if(d<LOOKAHEAD+60&&d>far) far=d;
+  }
+  const ns=lookAhead(a,Math.min(LOOKAHEAD,far+60));
+  const fx=Math.cos(a.h), fz=Math.sin(a.h);
+  for(const o of near){
+    if(o.phase==="gone"||o.phase==="climb") continue;
+    if((o.x-a.x)*fx+(o.z-a.z)*fz<=0) continue;              // behind us
+    const need=a.hull+o.hull+INTRAIL_BUF;
+    for(let k=0;k<ns;k++){
+      const dd=Math.hypot(_sx[k]-o.x,_sz[k]-o.z);
+      if(dd<need){
+        const prev=k>0?Math.hypot(_sx[k-1]-o.x,_sz[k-1]-o.z):Math.hypot(a.x-o.x,a.z-o.z);
+        const t=prev>dd?clamp((prev-need)/(prev-dd),0,1):0;
+        limit=Math.min(limit,a.s+Math.max(0,(k*LOOK_STEP)+(t-1)*LOOK_STEP));
+        break;
+      }
+    }
+  }
+  return limit;
+}
+
+function step(dt){
+  simT+=dt;
+  rebuildGrid();
+
+  /* ---- phase 0: geometric in-trail limits ---- */
+  for(const a of air) a.trailLimit=GROUND_PHASES[a.phase]?computeTrailLimit(a):Infinity;
+
+  /* ---- phase 1: release passed nodes, post one request each ---- */
+  for(const n of nodes){ n.bestAc=null; n.bestWait=-1; n.bestPri=-1; }
+  RUNWAY_GUARD.bestAc=null; RUNWAY_GUARD.bestWait=-1; RUNWAY_GUARD.bestPri=-1;
+
+  for(const a of air){
+    /* an aircraft still on stand queues for its taxilane junction like
+       everybody else, and never outranks one already rolling */
+    if(a.phase==="wait"){
+      if(simT>=a.offBlock){
+        const n=a.nodeList[0].node;
+        if(a.reqTarget!==n){ a.reqTarget=n; a.reqSince=simT; }
+        if(n.owner===null&&laneClearForPush(a,n)){
+          const w=simT-a.reqSince;
+          if(n.bestPri<0){ n.bestPri=0; n.bestWait=w; n.bestAc=a; }
+          else if(n.bestPri===0&&w>n.bestWait){ n.bestWait=w; n.bestAc=a; }
+        }
+      }
+      continue;
+    }
+    if(!GROUND_PHASES[a.phase]) continue;
+
+    const back=blockBack(a);
+    for(const e of a.nodeList){
+      if(e.node.runway) continue;                 // released on departure instead
+      if(a.owned.has(e.node)&&a.s-e.s>back){ a.owned.delete(e.node); e.node.owner=null; }
+    }
+    /* look far enough ahead to actually stop: braking distance from taxi
+       speed plus the clearance we must leave in front of the junction */
+    const horizon=back+130;
+    a.nextBlock=null; a.reqNode=null;
+    for(const e of a.nodeList){
+      if(e.s<a.s-1) continue;
+      if(e.s>a.s+horizon) break;
+      if(a.owned.has(e.node)) continue;
+      /* the wait clock starts the moment we want the junction, not when it
+         happens to fall free. Otherwise everyone queued behind a held node
+         starts from zero together, and the tie can be won by an aircraft
+         further back — which then holds a junction it cannot reach. */
+      if(a.reqTarget!==e.node){ a.reqTarget=e.node; a.reqSince=simT; }
+      if(e.node.owner!==null){ a.nextBlock=e.s; break; }
+      if(e.node.merge){
+        /* never enter a merge we could not clear: an aircraft stopped inside
+           a junction blocks the branch it is not even using, and that is what
+           turns two busy queues into a deadlock */
+        if(a.trailLimit<e.s+back){ a.nextBlock=e.s; break; }
+      } else if(a.trailLimit<e.s){
+        break;                    // traffic stops us short of it anyway
+      }
+      a.reqNode=e.node; a.reqAt=e.s;
+      const w=simT-a.reqSince;
+      if(e.node.bestPri<1){ e.node.bestPri=1; e.node.bestWait=w; e.node.bestAc=a; }
+      else if(w>e.node.bestWait){ e.node.bestWait=w; e.node.bestAc=a; }
+      break;
+    }
+  }
+
+  /* ---- phase 2: resolve grants, longest waiter first ---- */
+  for(const n of nodes){
+    if(n.owner===null&&n.bestAc){ n.owner=n.bestAc; n.bestAc.owned.add(n);
+      n.bestAc.reqTarget=null; n.bestAc.reqSince=0; }
+  }
+  if(RUNWAY_GUARD.owner===null&&RUNWAY_GUARD.bestAc&&runway.owner===null){
+    const a=RUNWAY_GUARD.bestAc;
+    runway.need=WAKE[runway.lastWake+a.F.wake];
+    if(simT>=runway.vacatedAt+runway.need){
+      RUNWAY_GUARD.owner=a; a.owned.add(RUNWAY_GUARD); a.reqTarget=null; a.reqSince=0;
+      runway.owner=a; a.phase="lineup";
+    }
+  }
+
+  /* ---- phase 3: advance every aircraft ---- */
+  for(const a of air) advance(a,dt);
+}
+
+function advance(a,dt){
+  switch(a.phase){
+    case "wait":
+      if(simT>=a.offBlock&&a.owned.has(a.nodeList[0].node)){ a.phase="push"; a.s=0; a.v=0; }
+      return;
+    case "push": {
+      a.v=Math.min(PUSH_V,a.v+0.7*dt);
+      a.s+=a.v*dt;
+      if(a.s>=a.pushPath.len){ a.s=a.pushPath.len; a.v=0; a.phase="startup"; a.timer=0; }
+      pathAt(a.pushPath,a.s,tmp);
+      a.x=tmp.x; a.z=tmp.z; a.h=tmp.h+Math.PI;   // towed backwards, nose to stand
+      a.dirty=true; return;
+    }
+    case "startup": {
+      a.timer+=dt;
+      a.h=angStep(a.h,0,(Math.PI/2)/STARTUP_T*dt*1.35);
+      if(a.timer>=STARTUP_T){ a.phase="taxi"; a.s=0; a.idx=0; a.v=0; a.h=0; }
+      a.dirty=true; return;
+    }
+    case "climb": return flyOut(a,dt);
+    case "gone": return;
+  }
+
+  /* ---------- ground movement: taxi / hold / lineup / roll ---------- */
+  const p=a.path, back=blockBack(a);
+  let limit=a.trailLimit;
+  if(a.nextBlock!==null&&a.nextBlock!==undefined) limit=Math.min(limit,a.nextBlock-back);
+  if(a.reqNode&&!a.owned.has(a.reqNode)) limit=Math.min(limit,a.reqAt-back);
+
+  pathAt(p,a.s,tmp);
+  let vmax=tmp.v, acc=ACC;
+  if(a.phase==="lineup"||a.phase==="roll"){
+    if(a.s>=a.sRunway-4){
+      a.phase="roll"; vmax=200; acc=ROLL_ACC;
+      limit=Infinity;                                 // the runway is ours alone
+    }
+  } else {
+    a.phase=(a.sRunway-a.s<70&&a.v<1.2)?"hold":"taxi";
+  }
+  a.stopLimit=limit;
+
+  const brake=Math.sqrt(2*DEC*Math.max(0,limit-a.s));
+  const vt=Math.min(vmax,brake);
+  if(vt>a.v) a.v=Math.min(vt,a.v+acc*dt); else a.v=Math.max(vt,a.v-DEC*1.5*dt);
+  if(a.v<0) a.v=0;
+  a.s+=a.v*dt;
+  while(a.idx<p.n-2&&p.S[a.idx+1]<a.s) a.idx++;
+
+  if(a.phase==="roll"&&a.v>=a.F.vr){                  // rotate
+    pathAt(p,a.s,tmp);
+    a.x=tmp.x; a.z=tmp.z; a.h=tmp.h;
+    a.phase="climb"; a.pitch=0; a.y=0; a.timer=0; a.dirty=true;
+    return;
+  }
+  pathAt(p,a.s,tmp);
+  a.x=tmp.x; a.z=tmp.z; a.h=tmp.h; a.y=0; a.pitch=0; a.bank=0;
+  a.dirty=true;
+}
+
+function flyOut(a,dt){
+  a.timer+=dt;
+  a.pitch=Math.min(0.175,a.pitch+0.10*dt);
+  a.v=Math.min(a.F.cruise,a.v+1.05*dt);
+  a.y+=a.v*Math.sin(a.pitch)*dt;
+  const hv=a.v*Math.cos(a.pitch);
+  if(a.y>260){                                        // turn onto the SID
+    const tgt=a.turnDir*0.42;
+    a.h=angStep(a.h,tgt,0.040*dt);
+    a.bank=angLerp(a.bank,clamp((tgt-a.h)*2.2,-0.42,0.42),Math.min(1,dt*0.8));
+  } else a.bank*=Math.max(0,1-dt);
+  a.x+=Math.cos(a.h)*hv*dt; a.z+=Math.sin(a.h)*hv*dt;
+  a.dirty=true;
+
+  if(runway.owner===a&&(a.y>40||a.x>RWY.x1)){         // runway vacated
+    runway.owner=null;
+    runway.vacatedAt=simT;
+    runway.lastWake=a.F.wake;
+    RUNWAY_GUARD.owner=null; a.owned.delete(RUNWAY_GUARD);
+    for(const n of a.owned) n.owner=null;
+    a.owned.clear();
+    departed++;
+  }
+  if(a.y>2400||Math.hypot(a.x,a.z)>9000){ a.phase="gone"; a.dirty=true; }
+}
+
+/* ---------------------- independent conflict audit ------------------ */
+function auditSeparation(){
+  let worst=Infinity;
+  rebuildGrid();
+  for(const a of air){
+    if(a.phase==="gone") continue;
+    for(const o of neighbours(a,300)){
+      if(o.id<=a.id||o.phase==="gone") continue;
+      const d=Math.hypot(o.x-a.x,o.z-a.z,(o.y||0)-(a.y||0));
+      const gap=d-a.hull-o.hull;
+      if(gap<worst) worst=gap;
+      if(gap<0) conflictPairs.add(a.id*1000+o.id);
+    }
+  }
+  if(worst<Infinity) minGap=worst;
+  return worst;
+}
+</script>
+
+<script>
+"use strict";
+/* ===================== dynamic aircraft rendering =====================
+   Every aircraft owns a fixed slot in one vertex buffer. Only slots that
+   actually moved this frame are re-transformed and re-uploaded, so a
+   full apron of parked aircraft costs nothing to keep on screen.
+   ===================================================================== */
+let TPL=[], SLOT_V=0, acPos=null, acCol=null, acBuf=null, shBuf=null, shPos=null, shCol=null;
+const SH_V=12;
+
+function buildTemplates(){
+  TPL=[];
+  for(const k of ["H","M","L"]) for(let li=0;li<LIVERY.length;li++){
+    const m=buildAircraft(k,LIVERY[li]);
+    TPL.push({kind:k,li,n:m.pos.length/3,
+      pos:new Float32Array(m.pos),nrm:new Float32Array(m.nrm),col:new Float32Array(m.col)});
+    SLOT_V=Math.max(SLOT_V,m.pos.length/3);
+  }
+  acPos=new Float32Array(100*SLOT_V*3); acCol=new Float32Array(100*SLOT_V*3);
+  shPos=new Float32Array(100*SH_V*3);   shCol=new Float32Array(100*SH_V*3);
+  const mk=(arr)=>{ const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b);
+    gl.bufferData(gl.ARRAY_BUFFER,arr,gl.DYNAMIC_DRAW); return b; };
+  acBuf={posB:mk(acPos),colB:mk(acCol),count:100*SLOT_V};
+  shBuf={posB:mk(shPos),colB:mk(shCol),count:100*SH_V};
+}
+function tplIndex(kind,li){ return (kind==="H"?0:kind==="M"?1:2)*LIVERY.length+li; }
+
+const _R=new Float64Array(9);
+function rot(h,p,b){
+  const ch=Math.cos(h),sh=Math.sin(h),cp=Math.cos(p),sp=Math.sin(p),cb=Math.cos(b),sb=Math.sin(b);
+  /* yaw * pitch * bank, columns are the images of local X, Y, Z */
+  const p00=cp,p01=-sp,p02=0, p10=sp,p11=cp,p12=0, p20=0,p21=0,p22=1;
+  const b00=1,b01=0,b02=0, b10=0,b11=cb,b12=-sb, b20=0,b21=sb,b22=cb;
+  const q00=p00*b00+p01*b10+p02*b20, q01=p00*b01+p01*b11+p02*b21, q02=p00*b02+p01*b12+p02*b22;
+  const q10=p10*b00+p11*b10+p12*b20, q11=p10*b01+p11*b11+p12*b21, q12=p10*b02+p11*b12+p12*b22;
+  const q20=p20*b00+p21*b10+p22*b20, q21=p20*b01+p21*b11+p22*b21, q22=p20*b02+p21*b12+p22*b22;
+  _R[0]=ch*q00-sh*q20; _R[1]=ch*q01-sh*q21; _R[2]=ch*q02-sh*q22;
+  _R[3]=q10;           _R[4]=q11;           _R[5]=q12;
+  _R[6]=sh*q00+ch*q20; _R[7]=sh*q01+ch*q21; _R[8]=sh*q02+ch*q22;
+}
+const GROUND_SHADE=[C.concrete[0]*0.50,C.concrete[1]*0.50,C.concrete[2]*0.50];
+
+function writeSlot(a){
+  const o=a.slot*SLOT_V*3;
+  if(a.phase==="gone"){
+    for(let i=0;i<SLOT_V*3;i+=3){ acPos[o+i]=0; acPos[o+i+1]=-9000; acPos[o+i+2]=0;
+      acCol[o+i]=0; acCol[o+i+1]=0; acCol[o+i+2]=0; }
+    for(let i=0;i<SH_V*3;i+=3){ const q=a.slot*SH_V*3+i;
+      shPos[q]=0; shPos[q+1]=-9000; shPos[q+2]=0; shCol[q]=0; shCol[q+1]=0; shCol[q+2]=0; }
+    return;
+  }
+  const t=TPL[a.tpl];
+  rot(a.h,a.pitch,a.bank);
+  const r=_R, px=a.x, py=a.y, pz=a.z;
+  for(let i=0,j=0;i<t.n;i++,j+=3){
+    const lx=t.pos[j],ly=t.pos[j+1],lz=t.pos[j+2];
+    acPos[o+j]  =r[0]*lx+r[1]*ly+r[2]*lz+px;
+    acPos[o+j+1]=r[3]*lx+r[4]*ly+r[5]*lz+py;
+    acPos[o+j+2]=r[6]*lx+r[7]*ly+r[8]*lz+pz;
+    const nx=t.nrm[j],ny=t.nrm[j+1],nz=t.nrm[j+2];
+    const wx=r[0]*nx+r[1]*ny+r[2]*nz, wy=r[3]*nx+r[4]*ny+r[5]*nz, wz=r[6]*nx+r[7]*ny+r[8]*nz;
+    const f=shadeF(wx,wy,wz);
+    acCol[o+j]=t.col[j]*f; acCol[o+j+1]=t.col[j+1]*f; acCol[o+j+2]=t.col[j+2]*f;
+  }
+  for(let i=t.n;i<SLOT_V;i++){                        // pad with degenerate triangles
+    const j=i*3; acPos[o+j]=px; acPos[o+j+1]=-9000; acPos[o+j+2]=pz;
+    acCol[o+j]=0; acCol[o+j+1]=0; acCol[o+j+2]=0;
+  }
+  /* ground shadow: a fuselage strip crossed by a wing strip */
+  const q=a.slot*SH_V*3, F=a.F, ch=Math.cos(a.h), sh2=Math.sin(a.h);
+  const fade=a.y>0?Math.max(0,1-a.y/260):1;
+  const hide=fade<=0.02;
+  let w=0;
+  const put=(fx,fz)=>{ const X=px+ch*fx-sh2*fz, Z=pz+sh2*fx+ch*fz;
+    shPos[q+w]=X; shPos[q+w+1]=hide?-9000:0.0; shPos[q+w+2]=Z;
+    const g=lerp(C.concrete[0]*0.92,GROUND_SHADE[0],fade);
+    shCol[q+w]=g; shCol[q+w+1]=lerp(C.concrete[1]*0.92,GROUND_SHADE[1],fade);
+    shCol[q+w+2]=lerp(C.concrete[2]*0.92,GROUND_SHADE[2],fade); w+=3; };
+  const L2=F.len/2, S2=F.span/2, fw=F.fuseR*1.5, sw=F.len*0.09;
+  put(-L2,-fw); put(L2,-fw); put(L2,fw);  put(-L2,-fw); put(L2,fw); put(-L2,fw);
+  put(-sw,-S2); put(sw,-S2);  put(sw,S2); put(-sw,-S2); put(sw,S2); put(-sw,S2);
+}
+function uploadSlot(a){
+  const off=a.slot*SLOT_V*3*4, len=SLOT_V*3;
+  gl.bindBuffer(gl.ARRAY_BUFFER,acBuf.posB);
+  gl.bufferSubData(gl.ARRAY_BUFFER,off,acPos.subarray(a.slot*len,a.slot*len+len));
+  gl.bindBuffer(gl.ARRAY_BUFFER,acBuf.colB);
+  gl.bufferSubData(gl.ARRAY_BUFFER,off,acCol.subarray(a.slot*len,a.slot*len+len));
+  const so=a.slot*SH_V*3;
+  gl.bindBuffer(gl.ARRAY_BUFFER,shBuf.posB);
+  gl.bufferSubData(gl.ARRAY_BUFFER,so*4,shPos.subarray(so,so+SH_V*3));
+  gl.bindBuffer(gl.ARRAY_BUFFER,shBuf.colB);
+  gl.bufferSubData(gl.ARRAY_BUFFER,so*4,shCol.subarray(so,so+SH_V*3));
+}
+
+/* ------------------------------ camera ------------------------------ */
+/* Targets sit right of centre so the airfield clears the strip rail. */
+const CAMS={
+  /* eye lands at roughly the tower cab, looking west down runway 09 */
+  tower:    {tx:-800, tz:100, dist:1155, yaw:0.192, pitch:0.082},
+  threshold:{tx:-1500,tz:95,  dist:520,  yaw:2.720, pitch:0.140},
+  apron:    {tx:300,  tz:900, dist:640,  yaw:-1.352,pitch:0.190},
+  plan:     {tx:420,  tz:430, dist:3050, yaw:1.5708,pitch:1.300}
+};
+const cam={tx:0,ty:0,tz:300,dist:1500,yaw:1.15,pitch:0.30,mode:"tower",chase:null};
+function applyCam(name){
+  const c=CAMS[name]; if(!c) return;
+  cam.tx=c.tx; cam.tz=c.tz; cam.ty=0; cam.dist=c.dist; cam.yaw=c.yaw; cam.pitch=c.pitch;
+}
+function camEye(){
+  const cp=Math.cos(cam.pitch);
+  return [cam.tx+cam.dist*cp*Math.cos(cam.yaw), cam.ty+cam.dist*Math.sin(cam.pitch),
+          cam.tz+cam.dist*cp*Math.sin(cam.yaw)];
+}
+function setMode(m){
+  cam.mode=m;
+  for(const b of document.querySelectorAll("#cams .chip")) b.setAttribute("aria-pressed",String(b.dataset.cam===m));
+  if(CAMS[m]) applyCam(m);
+}
+(function bindCamera(){
+  let drag=null;
+  const pt=e=>({x:e.clientX,y:e.clientY,pan:e.shiftKey||e.button===2});
+  canvas.addEventListener("pointerdown",e=>{
+    canvas.setPointerCapture(e.pointerId); drag=pt(e); canvas.classList.add("drag");
+  });
+  canvas.addEventListener("pointermove",e=>{
+    if(!drag) return;
+    const dx=e.clientX-drag.x, dy=e.clientY-drag.y; drag.x=e.clientX; drag.y=e.clientY;
+    if(drag.pan){
+      const s=cam.dist*0.0016, cy=Math.cos(cam.yaw), sy=Math.sin(cam.yaw);
+      cam.tx+= (sy*dx + cy*dy)*s; cam.tz+= (-cy*dx + sy*dy)*s;
+    } else {
+      cam.yaw-=dx*0.005; cam.pitch=clamp(cam.pitch+dy*0.004,0.045,1.51);
+    }
+    if(cam.mode!=="free"){ cam.mode="free"; cam.chase=null;
+      for(const b of document.querySelectorAll("#cams .chip")) b.setAttribute("aria-pressed","false"); }
+  });
+  const end=e=>{ drag=null; canvas.classList.remove("drag"); };
+  canvas.addEventListener("pointerup",end); canvas.addEventListener("pointercancel",end);
+  canvas.addEventListener("contextmenu",e=>e.preventDefault());
+  canvas.addEventListener("wheel",e=>{
+    e.preventDefault();
+    cam.dist=clamp(cam.dist*Math.exp(clamp(e.deltaY,-120,120)*0.0012),55,9500);
+  },{passive:false});
+  let pinch=0;
+  canvas.addEventListener("touchmove",e=>{
+    if(e.touches.length!==2) return;
+    const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+    if(pinch) cam.dist=clamp(cam.dist*pinch/d,55,9500);
+    pinch=d;
+  },{passive:true});
+  canvas.addEventListener("touchend",()=>{pinch=0;});
+})();
+
+/* ------------------------------- HUD -------------------------------- */
+const $=id=>document.getElementById(id);
+const PHASE_LABEL={push:"Pushback",startup:"Start-up",taxi:"Taxi",hold:"Hold short",
+                   lineup:"Line up",roll:"Take-off roll",climb:"Airborne"};
+const PHASE_CLASS={push:"p-push",startup:"p-push",taxi:"p-taxi",hold:"p-hold",
+                   lineup:"p-dep",roll:"p-dep",climb:"p-dep"};
+function hhmmss(t){
+  const s=Math.floor(t)%60, m=Math.floor(t/60)%60, h=Math.floor(t/3600);
+  return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(s).padStart(2,"0");
+}
+function distToGo(a){
+  if(a.phase==="climb") return -1;
+  if(a.phase==="roll"||a.phase==="lineup") return 0;
+  if(a.phase==="taxi"||a.phase==="hold") return a.sRunway-a.s;
+  return a.path.len+200;
+}
+let lastHud=0, lastStrips=0, liveCount=100;
+function updateHud(now){
+  if(now-lastHud<150) return; lastHud=now;
+  const c={wait:0,push:0,taxi:0,hold:0,dep:0}; let live=0;
+  for(const a of air){
+    if(a.phase!=="gone") live++;
+    if(a.phase==="wait") c.wait++;
+    else if(a.phase==="push"||a.phase==="startup") c.push++;
+    else if(a.phase==="taxi") c.taxi++;
+    else if(a.phase==="hold") c.hold++;
+    else if(a.phase!=="gone") c.dep++;
+  }
+  liveCount=live;
+  $("clock").textContent=hhmmss(simT);
+  $("c-park").textContent=c.wait; $("c-push").textContent=c.push;
+  $("c-taxi").textContent=c.taxi; $("c-hold").textContent=c.hold; $("c-roll").textContent=c.dep;
+  $("dep").innerHTML=departed+'<span style="color:var(--ink3)">/100</span>';
+  $("depbar").style.width=(departed)+"%";
+  const rw=$("rwy");
+  if(runway.owner){ rw.className="pill busy"; rw.textContent=runway.owner.cs; }
+  else{
+    const wait=Math.max(0,Math.ceil(runway.vacatedAt+runway.need-simT));
+    if(departed>=100){ rw.className="pill ok"; rw.textContent="Field clear"; }
+    else if(wait>0){ rw.className="pill busy"; rw.textContent="Wake "+wait+"s"; }
+    else { rw.className="pill ok"; rw.textContent="Clear"; }
+  }
+  const sv=$("sepv");
+  sv.textContent=(minGap===Infinity?"—":minGap.toFixed(0)+" m");
+  sv.className="v num "+(minGap<0?"bad":"good");
+  const cf=$("confl"); cf.textContent=conflictPairs.size;
+  cf.className="v num "+(conflictPairs.size?"bad":"good");
+
+  if(now-lastStrips<420) return; lastStrips=now;
+  const act=air.filter(a=>a.phase!=="wait"&&a.phase!=="gone")
+               .sort((x,y)=>distToGo(x)-distToGo(y)).slice(0,16);
+  $("bayn").textContent=air.filter(a=>a.phase!=="wait"&&a.phase!=="gone").length;
+  if(!act.length){
+    $("strips").innerHTML= departed>=100
+      ? '<p class="empty">All 100 departures airborne. The apron is empty &mdash; press Reset to run the morning again.</p>'
+      : '<p class="empty">Nothing moving. The next crew calls for push when its off-block time comes round.</p>';
+  } else {
+    let h="";
+    for(const a of act){
+      const d=distToGo(a);
+      const meta=a.phase==="climb"?(Math.round(a.y)+" m"):
+                 (d<=0?a.sid:(d/1000).toFixed(1)+" km");
+      h+='<div class="strip '+PHASE_CLASS[a.phase]+'"><span class="cs">'+a.cs+'</span>'+
+         '<span class="ph">'+PHASE_LABEL[a.phase]+'</span>'+
+         '<span class="ty">'+a.type+' · '+a.F.cat+' · stand '+a.stand+'</span>'+
+         '<span class="mt">'+meta+'</span></div>';
+    }
+    $("strips").innerHTML=h;
+  }
+}
+
+/* ------------------------------- boot ------------------------------- */
+let scenery=null, speed=30, paused=false;
+function resize(){
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  const w=Math.round(canvas.clientWidth*dpr), h=Math.round(canvas.clientHeight*dpr);
+  if(canvas.width!==w||canvas.height!==h){ canvas.width=w; canvas.height=h; }
+  gl.viewport(0,0,canvas.width,canvas.height);
+}
+function resetSim(){
+  makeFleet();
+  liveCount=100;
+  for(const a of air){ a.tpl=tplIndex(a.kind,LIVERY.indexOf(a.liv)); a.dirty=true; }
+  for(const a of air){ writeSlot(a); a.dirty=false; }
+  gl.bindBuffer(gl.ARRAY_BUFFER,acBuf.posB); gl.bufferData(gl.ARRAY_BUFFER,acPos,gl.DYNAMIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,acBuf.colB); gl.bufferData(gl.ARRAY_BUFFER,acCol,gl.DYNAMIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,shBuf.posB); gl.bufferData(gl.ARRAY_BUFFER,shPos,gl.DYNAMIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,shBuf.colB); gl.bufferData(gl.ARRAY_BUFFER,shCol,gl.DYNAMIC_DRAW);
+}
+
+let prev=0, acc=0;
+function frame(now){
+  requestAnimationFrame(frame);
+  const dtReal=Math.min(0.05,(now-prev)/1000||0); prev=now;
+  if(!paused&&liveCount>0){
+    acc+=dtReal*speed;
+    let guard=0;
+    while(acc>=SIM_DT&&guard<16){ step(SIM_DT); acc-=SIM_DT; guard++; }
+    if(acc>SIM_DT*16) acc=0;
+    auditSeparation();
+  }
+  if(cam.mode==="chase"){
+    let best=runway.owner;
+    if(!best||best.phase==="gone") { best=null;
+      for(const a of air){
+        if(a.phase==="gone"||a.phase==="wait"||a.phase==="climb") continue;
+        if(!best||distToGo(a)<distToGo(best)) best=a;
+      }
+    }
+    if(best){ cam.chase=best; cam.tx=best.x; cam.ty=best.y+14; cam.tz=best.z;
+      cam.yaw=best.h+Math.PI; cam.dist=Math.max(165,best.F.len*3.4); cam.pitch=0.235; }
+  }
+  for(const a of air){ if(a.dirty){ writeSlot(a); uploadSlot(a); a.dirty=false; } }
+
+  resize();
+  const asp=canvas.width/Math.max(1,canvas.height);
+  const VP=m4mul(m4persp(50*Math.PI/180,asp,12,26000),m4look(camEye(),[cam.tx,cam.ty,cam.tz],[0,1,0]));
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.uniformMatrix4fv(uVP,false,VP);
+  gl.disable(gl.POLYGON_OFFSET_FILL);
+  drawBuffer(scenery.base);
+  drawBuffer(acBuf);
+  gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-2.0,-3.0);
+  drawBuffer(scenery.mark);
+  drawBuffer(shBuf);
+  gl.disable(gl.POLYGON_OFFSET_FILL);
+  updateHud(now);
+}
+
+if(gl){
+  scenery=buildScenery();
+  buildTemplates();
+  resetSim();
+  setMode("tower");
+  for(const b of document.querySelectorAll("#cams .chip")) b.addEventListener("click",()=>setMode(b.dataset.cam));
+  $("ts").addEventListener("input",e=>{ speed=+e.target.value; $("tsv").textContent=speed+"×"; });
+  $("pause").addEventListener("click",e=>{ paused=!paused; e.target.textContent=paused?"Resume":"Pause"; });
+  $("reset").addEventListener("click",()=>{ resetSim(); paused=false; $("pause").textContent="Pause"; });
+  document.getElementById("splash").classList.add("done");
+  requestAnimationFrame(frame);
+}
+</script>

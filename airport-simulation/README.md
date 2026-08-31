@@ -1,40 +1,33 @@
 # Pushback to Wheels-Up
 
-A single-file, dependency-free simulation of **KMEG**, a fictional single-runway
-airport, from first pushback to last wheels-up. One hundred aircraft start on
-stand and must all reach the air, and none of them may ever touch.
+A single-file, dependency-free simulation of **KMEG**, a fictional airport with
+one runway worked in mixed mode. A hundred aircraft start on stand and must all
+get airborne, while a steady stream of inbounds lands on the same strip of
+tarmac. Nothing may ever touch.
 
-Open `index.html` in any browser with WebGL. Nothing is fetched at runtime except
-the two webfonts, and the page renders correctly without them.
+Open `index.html` in any browser with WebGL. Nothing is fetched at runtime
+except the two webfonts, and the page renders correctly without them.
 
 ## The rules
 
-Two constraints drove every design decision:
-
-**1. No collisions.** Three independent mechanisms keep aircraft apart, and a
-fourth measures whether they worked.
+**1. No collisions.** Four mechanisms keep aircraft apart, and a fifth measures
+whether they worked.
 
 | Mechanism | What it guarantees |
 |---|---|
-| **Node locks** | Every junction of the movement graph is a mutex. An aircraft may not enter a junction it does not own. Grants go to the longest-waiting requester, and the wait clock starts the moment an aircraft *wants* a junction — not when it happens to fall free — so the aircraft physically at the front of a queue always wins. |
-| **In-trail separation** | Each aircraft projects its own path forward in 10 m steps and brakes to keep `hull + hull + 30 m` clear of anything standing on it. Because it tests the path rather than a heading cone, it holds through turns and merges. |
-| **Runway exclusivity** | The runway is one resource, released only once the departure is airborne, then held closed for the wake-turbulence interval owed to the *next* departure's weight category. |
+| **Node locks** | Every junction of the movement graph is a mutex. Grants go to the longest-waiting requester, and the wait clock starts when an aircraft first *wants* a junction rather than when it happens to fall free — so the aircraft physically at the front of a queue always wins the tie, and never ends up holding a junction it cannot reach. |
+| **In-trail separation** | Each aircraft projects its own path forward and brakes to keep `hull + hull + 30 m` clear of anything standing on it. Because it tests the path rather than a heading cone, it holds through turns and merges. The scan reaches as far as the aircraft could actually need to brake, which for a landing roll at 70 m/s is over a kilometre. |
+| **Runway** | One exclusive resource contested by both flows. Arrivals outrank departures: a departure only gets position clearance if it can be airborne and clear before the next arrival needs the runway, and an arrival that cannot have it goes around. |
+| **Vacate guarantee** | An arrival is only cleared to land when its rapid exit is clear, so a landing aircraft can always get off. Without it a blocked exit locks the runway, and with the runway locked nothing else on the field can drain either. |
 | **Conflict audit** | An independent pass measures true hull-to-hull distance for every pair each frame. `MIN HULL GAP` and `CONFLICTS` in the status bar are that measurement, not a claim. |
 
 Two further rules stop the traffic model from eating itself:
 
-- **Never block the box.** At a true merge (where a taxilane joins the collector),
-  an aircraft may only enter if it can also *clear* the junction. An aircraft
-  stopped inside a merge blocks the branch it is not even using, and that is what
-  turns two busy queues into a deadlock.
+- **Never block the box.** At a merge, an aircraft may only enter if it can also
+  *clear* it. An aircraft stopped inside a junction blocks the branch it is not
+  even using, and that is what turns two busy queues into a deadlock.
 - **Never reserve what you cannot reach.** An aircraft held up by traffic ahead
-  does not take a lock it cannot get to, or the aircraft in front of it would be
-  waiting on a junction owned by someone stuck behind.
-
-Deadlock freedom comes from the layout: all movement flows one way (stand → taxilane
-→ collector → taxiway ALPHA → runway 09), so the flow graph is acyclic and an
-aircraft only ever waits on something ahead of it. The two rules above are what keep
-the *geometric* waits acyclic too.
+  does not take a lock it cannot get to.
 
 **2. The model is not transparent.** The fragment shader writes a literal
 `alpha 1.0`, `gl.BLEND` is never enabled, and depth testing resolves every
@@ -43,28 +36,66 @@ use `gl.polygonOffset` rather than an alpha pass, and the grass is cut into
 rectangles around every pavement footprint so no two differently coloured
 surfaces are ever coplanar.
 
-## The airfield
+## Layout: why the two flows never cross
 
-- Runway 09/27, 3200 × 45 m, with piano-key threshold, aiming points, touchdown
-  zone stripes, blocky designators and edge lighting.
-- Taxiway ALPHA, 170 m north of the centreline, one-way westbound to the 09 hold.
-- Four apron taxilanes feeding an eastern collector; 100 nose-in stands (A01–D25)
-  with lead-in lines, stop bars and jet bridges.
-- Terminal, four concourse piers, control tower, maintenance hangars, radar head.
+```
+             apron  z 282..1260   (4 taxilanes east, 100 stands)
+ spur x=-1420 ^                                    v collector x=1760
+ BRAVO  z=+170  <==== arrivals westbound ====        |
+    rapid exits x=300, 900, 1450  ^ north off the runway
+ RUNWAY z=0     ==== departures and arrivals eastbound ====
+ ALPHA  z=-170  <==== departures westbound ====      <
+```
 
-Departures run about 32/hour, so a full 100-aircraft morning takes a little over
-three simulated hours — run it at 30× or higher.
+ALPHA sits south of the runway and BRAVO north of it, and the departure
+collector rounds the *east end* of the runway rather than crossing it. The
+arrival spur enters the apron west of every stand, so no departure ever uses
+those nodes. The two flows therefore share only the apron taxilanes — where
+they run the same direction and the ordinary node locks already cover them.
+No aircraft ever crosses an opposing stream, and the flow graph stays acyclic.
+
+## How the runway is worked
+
+Taxiing into position takes about half a minute, and doing that serially with
+the runway is what caps a single-runway airport. So position clearance is a
+second, weaker resource: an aircraft may occupy the threshold while the previous
+movement is still rolling out, and takes the runway itself only when it is
+actually free. That is line-up-and-wait, and it cut measured departure runway
+occupancy from 64 s to 35 s.
+
+Departures all turn north off the runway; the missed approach turns south and
+climbs harder, so a go-around never overtakes a departure on the same track. An
+arrival breaks off early — 4.2 km out, still 200 m up — if a departure is still
+on the ground, rather than pressing in to the last gate.
+
+The result is about **36 runway movements an hour**: 100 departures and around
+45 arrivals in a four-hour morning. Run it at 30× or higher.
 
 ## Controls
 
 Drag to orbit, shift-drag or right-drag to pan, scroll to zoom. Camera presets:
-**Tower** (from the cab, west down the runway), **Threshold**, **Apron**,
-**Plan**, **Chase** (follows the next departure). Speed slider, pause, reset.
+**Tower**, **Final**, **Threshold**, **Apron**, **Plan**, **Chase** (follows
+whoever has the runway). Speed slider, pause, reset.
 
 ## Verifying it
 
-`index.html` carries no build step, but the simulation is separable from the
+`index.html` has no build step, but the simulation is separable from the
 renderer: concatenate its `<script>` blocks, stub `document` and the WebGL
-context, and drive `step(SIM_DT)` in a loop. Doing that over ten randomised
-fleet and schedule arrangements gives 100/100 departures every time, zero hull
-overlaps, and a minimum hull-to-hull gap of 35–40 m.
+context, and drive `step(SIM_DT)` in a loop. Over eight randomised fleet and
+schedule arrangements that gives 100/100 departures and 42–47 arrivals every
+time, zero hull overlaps, a minimum hull-to-hull gap of 35–41 m — the in-trail
+buffer, as designed — and 1.0–2.5 km between anything airborne.
+
+Two numbers are worth reading carefully in the status bar:
+
+- **`MIN HULL GAP`** is the *current* closest pair, measured centre-to-centre
+  minus both hull radii (`max(length, wingspan) / 2`: 32 m heavy, 19 m medium,
+  15.5 m light). It sits around 35–41 m because two floors set it: the 30 m
+  in-trail buffer in a taxi queue, and the 105 m stand pitch, which leaves two
+  parked heavies 41 m apart.
+- **`CONFLICTS`** is cumulative, not instantaneous — the number of distinct
+  pairs whose hulls have *ever* overlapped. It should read 0 for the whole run.
+
+Go-arounds are part of the model, not a failure: two to five per run is the
+vacate guarantee and the runway arbitration refusing to put an aircraft
+somewhere it cannot safely go.

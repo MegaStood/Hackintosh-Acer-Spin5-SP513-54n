@@ -41,7 +41,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);
 .num{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
 
 /* ---- identity ---- */
-#rail{position:fixed;left:14px;top:14px;bottom:118px;width:296px;z-index:5;pointer-events:none;
+#rail{position:fixed;left:14px;top:14px;bottom:118px;width:318px;z-index:5;pointer-events:none;
   display:flex;flex-direction:column;gap:10px;max-width:calc(100vw - 28px)}
 #rail>*{pointer-events:auto}
 #ident{background:var(--panel);flex:none;
@@ -78,12 +78,14 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);
 .strip{background:var(--strip);border:1px solid var(--line);border-left:4px solid var(--ink3);
   border-radius:2px;padding:6px 8px;display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:baseline}
 .strip .cs{font-family:var(--f-mono);font-weight:700;font-size:12.5px;letter-spacing:.02em;white-space:nowrap}
-.strip .ty{font-family:var(--f-mono);font-size:10.5px;color:var(--ink2);
+.strip .ty{font-family:var(--f-mono);font-size:10px;color:var(--ink2);letter-spacing:-.01em;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .strip .ph{font-family:var(--f-disp);font-weight:600;font-size:10px;letter-spacing:.12em;
   text-transform:uppercase;text-align:right;white-space:nowrap}
 .strip .mt{font-family:var(--f-mono);font-size:10px;color:var(--ink3);text-align:right;white-space:nowrap}
-.strip.p-push{border-left-color:var(--blue)} .strip.p-push .ph{color:var(--blue)}
+.strip.p-push{border-left-color:var(--ink3)} .strip.p-push .ph{color:var(--ink3)}
+.strip.p-arr{border-left-color:var(--blue)} .strip.p-arr .ph{color:var(--blue)}
+.strip.p-ga{border-left-color:var(--amber)} .strip.p-ga .ph{color:var(--amber)}
 .strip.p-taxi{border-left-color:var(--ink3)} .strip.p-taxi .ph{color:var(--ink2)}
 .strip.p-hold{border-left-color:var(--red)} .strip.p-hold .ph{color:var(--red)}
 .strip.p-dep{border-left-color:var(--green)} .strip.p-dep .ph{color:var(--green)}
@@ -101,6 +103,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);
   padding:4px 8px;border-radius:2px;display:inline-block}
 .pill.ok{background:var(--green);color:var(--bg)}
 .pill.busy{background:var(--red);color:var(--bg)}
+.pill.land{background:var(--blue);color:var(--bg)}
 #counts{display:flex;gap:12px;flex-wrap:wrap;flex:1;min-width:0}
 #counts .c{display:flex;flex-direction:column;gap:5px}
 #counts .c .v{font-family:var(--f-mono);font-weight:500;font-size:14px;line-height:1}
@@ -141,7 +144,7 @@ input[type=range]::-moz-range-thumb{width:13px;height:17px;background:var(--ambe
   #counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 12px}
 }
 @media (max-width:1000px){
-  #bay{display:none} #rail{bottom:auto;width:288px}
+  #bay{display:none} #rail{bottom:auto;width:292px}
   #ident .icao{font-size:18px;padding:0 11px} #ident h1{font-size:16px}
 }
 @media (max-width:700px){
@@ -160,7 +163,7 @@ input[type=range]::-moz-range-thumb{width:13px;height:17px;background:var(--ambe
   <div class="icao">KMEG</div>
   <div class="txt">
     <h1>Pushback to Wheels-Up</h1>
-    <p>Megastood Intl &middot; departures on <b>runway 09</b></p>
+    <p>Megastood Intl &middot; one runway, <b>mixed mode</b></p>
   </div>
 </header>
 
@@ -172,6 +175,7 @@ input[type=range]::-moz-range-thumb{width:13px;height:17px;background:var(--ambe
 
 <aside id="cams" role="group" aria-label="Camera">
   <button class="chip" data-cam="tower" aria-pressed="true">Tower</button>
+  <button class="chip" data-cam="final" aria-pressed="false">Final</button>
   <button class="chip" data-cam="threshold" aria-pressed="false">Threshold</button>
   <button class="chip" data-cam="apron" aria-pressed="false">Apron</button>
   <button class="chip" data-cam="plan" aria-pressed="false">Plan</button>
@@ -182,18 +186,21 @@ input[type=range]::-moz-range-thumb{width:13px;height:17px;background:var(--ambe
   <section>
     <div class="stat"><span class="lbl">Elapsed</span><span class="v num" id="clock">00:00:00</span></div>
     <div class="stat"><span class="lbl">Runway 09</span><span id="rwy" class="pill ok">Clear</span></div>
-    <div class="stat"><span class="lbl">Airborne</span><span class="v num" id="dep">0<span style="color:var(--ink3)">/100</span></span>
+    <div class="stat"><span class="lbl">Departed</span><span class="v num" id="dep">0<span style="color:var(--ink3)">/100</span></span>
       <div class="meter"><i id="depbar" style="width:0%"></i></div></div>
+    <div class="stat"><span class="lbl">Landed</span><span class="v num" id="arr">0</span></div>
+    <div class="stat"><span class="lbl">Moves/hr</span><span class="v num" id="rate">&mdash;</span></div>
   </section>
   <section>
     <div id="counts">
-      <div class="c"><span class="lbl">At stand</span><span class="v num" id="c-park">100</span></div>
+      <div class="c"><span class="lbl">On stand</span><span class="v num" id="c-stand">100</span></div>
       <div class="c"><span class="lbl">Pushback</span><span class="v num" id="c-push">0</span></div>
-      <div class="c"><span class="lbl">Taxiing</span><span class="v num" id="c-taxi">0</span></div>
-      <div class="c"><span class="lbl">Holding short</span><span class="v num" id="c-hold">0</span></div>
-      <div class="c"><span class="lbl">Departing</span><span class="v num" id="c-roll">0</span></div>
+      <div class="c"><span class="lbl">Taxi out</span><span class="v num" id="c-taxi">0</span></div>
+      <div class="c"><span class="lbl">Inbound</span><span class="v num" id="c-in">0</span></div>
+      <div class="c"><span class="lbl">Taxi in</span><span class="v num" id="c-taxiin">0</span></div>
+      <div class="c"><span class="lbl">Go-arounds</span><span class="v num" id="c-ga">0</span></div>
       <div class="c"><span class="lbl">Min hull gap</span><span class="v num good" id="sepv">&mdash;</span></div>
-      <div class="c"><span class="lbl">Conflicts</span><span class="v num" id="confl">0</span></div>
+      <div class="c"><span class="lbl">Conflicts</span><span class="v num good" id="confl">0</span></div>
     </div>
   </section>
   <section>
@@ -400,22 +407,29 @@ function drawBuffer(b,count){
 <script>
 "use strict";
 /* ======================= KMEG airfield layout (metres) ================
-   Runway 09/27 on z=0, 3200 x 45. Parallel taxiway ALPHA 170 m north,
-   one-way westbound to the 09 threshold. Four apron taxilanes feed an
-   eastern collector. 100 nose-in stands, 25 per row.
-   Every movement runs the same direction of flow, so the movement graph
-   is acyclic: aircraft only ever wait for something strictly ahead of
-   them, which is what makes the locking below deadlock-free.
+   One runway, worked in mixed mode. Arrivals and departures never cross:
+     departures  stand -> taxilane E -> collector S -> ALPHA W -> runway E
+     arrivals    runway E -> rapid exit N -> BRAVO W -> spur N -> lane E
+   ALPHA sits south of the runway and BRAVO north of it, and the departure
+   collector rounds the east end of the runway rather than crossing it, so
+   the two flows share only the apron taxilanes — where they run the same
+   direction and the ordinary node locks already cover them.
    ===================================================================== */
 const RWY={x0:-1600,x1:1600,hw:22.5,shoulder:38};
-const TWY_A_Z=170, TWY_HW=14;
-const COLLECT_X=1700;
+const TWY_A_Z=-170;               // ALPHA — departures, one-way westbound
+const TWY_B_Z=170;                // BRAVO — arrivals, one-way westbound
+const TWY_HW=14;
+const COLLECT_X=1760;             // departure collector, east of the runway end
 const LANE_Z=[300,540,780,1020];
 const STAND_OFF=105;              // stand centre north of its taxilane
 const STANDS_PER_ROW=25, STAND_DX=105, STAND_X0=-1260;
-const APRON={x0:-1360,x1:1730,z0:282,z1:1260};
-const HOLD=[-1690,TWY_A_Z], LINK=[-1690,58], LINEUP=[-1520,0];
-const LANE_X_W=-1340, LANE_X_E=COLLECT_X;
+const APRON={x0:-1500,x1:1790,z0:282,z1:1260};
+const EXITS=[300,900,1450];       // rapid-exit taxiways, runway -> BRAVO
+const ARR_W=-1420;                // BRAVO west end and apron entry spur:
+                                  // 160 m clear of stand A01 at x=-1260
+const TOUCHDOWN=RWY.x0+300;
+const HOLD=[-1690,TWY_A_Z];
+const LANE_X_W=-1470;
 
 const C={
   grass:hex("#5E7A48"), grassDry:hex("#6E8452"),
@@ -444,18 +458,22 @@ function subRect(list,h){
 }
 
 /* Pavement is cut into non-overlapping rectangles per surface type: two
-   coplanar rectangles of different colours would z-fight, and the grass
-   is subtracted around all of them for the same reason. */
+   coplanar rectangles of different colours would z-fight, and the grass is
+   subtracted around all of them for the same reason. */
 const PAVE_ASPHALT=[                                   // runway + its turn-on
   {x0:RWY.x0-60,x1:RWY.x1+60,z0:-RWY.shoulder,z1:RWY.shoulder},
-  {x0:-1740,x1:-1520,z0:-RWY.shoulder,z1:62}
+  {x0:-1740,x1:-1520,z0:-62,z1:RWY.shoulder}
 ];
-const PAVE_TAXI=[                                      // taxiway ALPHA + links
-  {x0:-1740,x1:1740,z0:TWY_A_Z-TWY_HW,z1:TWY_A_Z+TWY_HW},
-  {x0:-1740,x1:-1640,z0:62,z1:TWY_A_Z-TWY_HW},
-  {x0:COLLECT_X-TWY_HW,x1:COLLECT_X+TWY_HW,z0:TWY_A_Z+TWY_HW,z1:APRON.z0}
+const MAINT={x0:-1960,x1:-1540,z0:300,z1:730};
+const PAVE_TAXI=[
+  {x0:-1740,x1:COLLECT_X+TWY_HW,z0:TWY_A_Z-TWY_HW,z1:TWY_A_Z+TWY_HW},     // ALPHA
+  {x0:-1740,x1:-1640,z0:TWY_A_Z+TWY_HW,z1:-62},                           // threshold link
+  {x0:COLLECT_X-TWY_HW,x1:COLLECT_X+TWY_HW,z0:TWY_A_Z+TWY_HW,z1:APRON.z0},// collector
+  {x0:ARR_W-TWY_HW,x1:EXITS[2]+TWY_HW,z0:TWY_B_Z-TWY_HW,z1:TWY_B_Z+TWY_HW},// BRAVO
+  {x0:ARR_W-TWY_HW,x1:ARR_W+TWY_HW,z0:TWY_B_Z+TWY_HW,z1:APRON.z0}          // apron entry spur
 ];
-const MAINT={x0:-1800,x1:-1380,z0:300,z1:730};
+for(const ex of EXITS)                                                     // rapid exits
+  PAVE_TAXI.push({x0:ex-TWY_HW,x1:ex+TWY_HW,z0:RWY.shoulder,z1:TWY_B_Z-TWY_HW});
 const PAVE_CONCRETE=[{x0:APRON.x0,x1:APRON.x1,z0:APRON.z0,z1:APRON.z1},MAINT];
 const PAVE_ALL=PAVE_ASPHALT.concat(PAVE_TAXI,PAVE_CONCRETE);
 
@@ -463,55 +481,50 @@ const PAVE_ALL=PAVE_ASPHALT.concat(PAVE_TAXI,PAVE_CONCRETE);
 function buildScenery(){
   const base=Mesh(false), mark=Mesh(false);
 
-  /* grass: one huge rect minus every pavement footprint */
   let grass=[{x0:-11000,x1:11000,z0:-9000,z1:11000}];
   for(const p of PAVE_ALL) grass=subRect(grass,p);
   for(const g of grass) slab(base,g.x0,g.x1,g.z0,g.z1,0,C.grass);
   /* mown strips either side of the runway, texture on an otherwise flat field */
   for(let i=0;i<30;i++){
     const x=-1780+i*122;
-    if(i%2){ slab(mark,x,x+61,-190,-RWY.shoulder,0,C.grassDry);
-             slab(mark,x,x+61,RWY.shoulder,TWY_A_Z-TWY_HW,0,C.grassDry); }
+    if(i%2){ slab(mark,x,x+61,TWY_A_Z+TWY_HW,-RWY.shoulder,0,C.grassDry);
+             slab(mark,x,x+61,RWY.shoulder,TWY_B_Z-TWY_HW,0,C.grassDry); }
   }
   for(const p of PAVE_ASPHALT)  slab(base,p.x0,p.x1,p.z0,p.z1,0,C.asphalt);
   for(const p of PAVE_TAXI)     slab(base,p.x0,p.x1,p.z0,p.z1,0,C.taxi);
   for(const p of PAVE_CONCRETE) slab(base,p.x0,p.x1,p.z0,p.z1,0,C.concrete);
-  /* apron slab joints: the grid that makes concrete read as concrete */
   for(let x=APRON.x0+40;x<APRON.x1;x+=40) slab(mark,x-0.35,x+0.35,APRON.z0,APRON.z1,0,C.joint);
   for(let z=APRON.z0+40;z<APRON.z1;z+=40) slab(mark,APRON.x0,APRON.x1,z-0.35,z+0.35,0,C.joint);
-  /* runway shoulder hatching */
-  slab(mark,RWY.x0,RWY.x1,-RWY.shoulder,-RWY.hw,0,C.shoulder);
-  slab(mark,RWY.x0,RWY.x1,RWY.hw,RWY.shoulder,0,C.shoulder);
+  for(let x=MAINT.x0+40;x<MAINT.x1;x+=40) slab(mark,x-0.35,x+0.35,MAINT.z0,MAINT.z1,0,C.joint);
 
   /* ---- runway markings (decals) ---- */
   const M=(x0,x1,z0,z1,c)=>slab(mark,x0,x1,z0,z1,0,c||C.white);
-  M(RWY.x0,RWY.x1,-RWY.hw,-RWY.hw+0.9);          // edge lines
+  M(RWY.x0,RWY.x1,-RWY.hw,-RWY.hw+0.9);
   M(RWY.x0,RWY.x1,RWY.hw-0.9,RWY.hw);
-  for(let x=RWY.x0+80;x<RWY.x1-80;x+=50) M(x,x+30,-0.45,0.45);   // centreline
-  for(let k=0;k<8;k++){                                          // piano keys
+  for(let x=RWY.x0+80;x<RWY.x1-80;x+=50) M(x,x+30,-0.45,0.45);
+  for(let k=0;k<8;k++){
     const z=-18+k*4.6; M(RWY.x0+8,RWY.x0+53,z,z+1.8); M(RWY.x1-53,RWY.x1-8,z,z+1.8);
   }
-  M(RWY.x0+8,RWY.x0+10,-RWY.hw,RWY.hw);                          // threshold bars
+  M(RWY.x0+8,RWY.x0+10,-RWY.hw,RWY.hw);
   M(RWY.x1-10,RWY.x1-8,-RWY.hw,RWY.hw);
-  for(const s of [1,-1]){                                        // aiming points
+  for(const s of [1,-1]){
     M(RWY.x0+400,RWY.x0+445,s*8,s*14); M(RWY.x1-445,RWY.x1-400,s*8,s*14);
   }
-  for(const d of [150,220,290]) for(const s of [1,-1]){          // touchdown zone
+  for(const d of [150,220,290]) for(const s of [1,-1]){
     M(RWY.x0+d,RWY.x0+d+22,s*4,s*7); M(RWY.x1-d-22,RWY.x1-d,s*4,s*7);
   }
-  /* blocky runway designators, read from each approach direction */
+  slab(mark,RWY.x0,RWY.x1,-RWY.shoulder,-RWY.hw,0,C.shoulder);
+  slab(mark,RWY.x0,RWY.x1,RWY.hw,RWY.shoulder,0,C.shoulder);
   const GLY={"0":["111","101","101","101","111"],"2":["111","001","111","100","111"],
              "7":["111","001","010","010","100"],"9":["111","101","111","001","111"]};
-  function digits(str,cx,cz,up){   // up=+1 -> glyph top points east
+  function digits(str,cx,cz,up){
     const cell=4.0, gw=3*cell, gh=5*cell, gap=3;
     let off=-(str.length*gw+(str.length-1)*gap)/2;
     for(const ch of str){
       const rows=GLY[ch];
       for(let r=0;r<5;r++) for(let c=0;c<3;c++){
         if(rows[r][c]!=="1") continue;
-        const along=(gh/2-(r+0.5)*cell)*up;                  // along runway axis
-        const across=((off+(c+0.5)*cell)-0)*up;              // across runway
-        const x=cx+along, z=cz+across;
+        const x=cx+(gh/2-(r+0.5)*cell)*up, z=cz+(off+(c+0.5)*cell)*up;
         M(x-cell/2,x+cell/2,z-cell/2,z+cell/2);
       }
       off+=gw+gap;
@@ -520,73 +533,82 @@ function buildScenery(){
   digits("09",RWY.x0+95,0,1);
   digits("27",RWY.x1-95,0,-1);
 
-  /* ---- taxiway centrelines and hold-short bars (decals) ---- */
+  /* ---- taxiway centrelines (decals) ---- */
   const Y=(x0,x1,z0,z1)=>slab(mark,x0,x1,z0,z1,0,C.yellow);
-  Y(-1690,1716,TWY_A_Z-0.4,TWY_A_Z+0.4);                          // ALPHA
-  Y(COLLECT_X-0.4,COLLECT_X+0.4,TWY_A_Z,LANE_Z[3]);               // collector
-  for(const lz of LANE_Z) Y(LANE_X_W,COLLECT_X,lz-0.4,lz+0.4);    // taxilanes
+  Y(-1690,COLLECT_X+TWY_HW,TWY_A_Z-0.4,TWY_A_Z+0.4);                  // ALPHA
+  Y(ARR_W,EXITS[2],TWY_B_Z-0.4,TWY_B_Z+0.4);                          // BRAVO
+  Y(COLLECT_X-0.4,COLLECT_X+0.4,TWY_A_Z,LANE_Z[3]);                   // collector
+  Y(ARR_W-0.4,ARR_W+0.4,TWY_B_Z,LANE_Z[3]);                           // apron entry spur
+  Y(-1690.4,-1689.6,TWY_A_Z,0); Y(-1690,-1560,-0.4,0.4);              // threshold link
+  for(const ex of EXITS) Y(ex-0.4,ex+0.4,0,TWY_B_Z);                  // rapid exits
+  for(const lz of LANE_Z) Y(LANE_X_W,COLLECT_X,lz-0.4,lz+0.4);
   for(let r=0;r<4;r++) for(let i=0;i<STANDS_PER_ROW;i++){
     const x=STAND_X0+i*STAND_DX;
-    Y(x-0.4,x+0.4,LANE_Z[r],LANE_Z[r]+STAND_OFF);                 // stand lead-in
-    Y(x-9,x+9,LANE_Z[r]+STAND_OFF+16,LANE_Z[r]+STAND_OFF+17.2);   // stop bar
+    Y(x-0.4,x+0.4,LANE_Z[r],LANE_Z[r]+STAND_OFF);
+    Y(x-9,x+9,LANE_Z[r]+STAND_OFF+16,LANE_Z[r]+STAND_OFF+17.2);
   }
-  /* hold short of runway 09: the mandatory ladder */
-  for(let k=0;k<4;k++){ const x=-1668-k*2.4; Y(x,x+1.2,TWY_A_Z-TWY_HW,TWY_A_Z+TWY_HW); }
-  Y(-1652,-1650,TWY_A_Z-TWY_HW,TWY_A_Z+TWY_HW);
-  slab(mark,-1662,-1656,TWY_A_Z+TWY_HW+1,TWY_A_Z+TWY_HW+7,0,C.red);
-  /* threshold link centreline */
-  Y(-1690.4,-1689.6,62,TWY_A_Z);
-  Y(-1690,-1560,-0.4,0.4);
+  /* holding position for runway 09, where departures actually stop */
+  for(let k=0;k<4;k++){ const x=-1584+k*2.4; Y(x,x+1.2,TWY_A_Z-TWY_HW,TWY_A_Z+TWY_HW); }
+  Y(-1568,-1566,TWY_A_Z-TWY_HW,TWY_A_Z+TWY_HW);
+  slab(mark,-1578,-1572,TWY_A_Z-TWY_HW-7,TWY_A_Z-TWY_HW-1,0,C.red);
+  /* runway holding position on each rapid exit: an arrival is "off" past this */
+  for(const ex of EXITS){
+    for(let k=0;k<4;k++){ const z=104+k*2.4; Y(ex-TWY_HW,ex+TWY_HW,z,z+1.2); }
+    slab(mark,ex+TWY_HW+1,ex+TWY_HW+7,106,112,0,C.red);
+  }
 
-  /* ---- edge lighting: small blocks, no glow, still reads at distance ---- */
+  /* ---- edge lighting ---- */
   for(let x=RWY.x0+30;x<=RWY.x1-30;x+=60) for(const sgn of [1,-1])
     box(base,x,0.5,sgn*(RWY.hw+2.5),1.1,0.55,1.1,C.light,C.light);
   for(let x=RWY.x0+60;x<=RWY.x1-60;x+=120)
     box(base,x,0.35,0,0.9,0.4,0.9,C.light,C.light);
+  /* approach lighting off the 09 threshold */
+  for(let k=1;k<=10;k++){
+    const x=RWY.x0-k*60;
+    box(base,x,0.6,0,1.4,0.6,7,C.light,C.light);
+  }
 
   /* ---- terminal, concourses, jet bridges ---- */
   box(base,0,14,1332,1210,14,80,C.bldg,C.bldgTop);
-  box(base,0,21.5,1332,1150,3.4,74,C.glass,C.bldgTop);            // clerestory band
-  for(let i=-5;i<=5;i++) box(base,i*210,7,1250,26,7,3,C.bldg2,C.bldgTop);  // landside piers
+  box(base,0,21.5,1332,1150,3.4,74,C.glass,C.bldgTop);
+  for(let i=-5;i<=5;i++) box(base,i*210,7,1250,26,7,3,C.bldg2,C.bldgTop);
   for(let r=0;r<4;r++){
     const cz=LANE_Z[r]+STAND_OFF+52;
-    box(base,0,7.5,cz,1320,7.5,18,C.bldg2,C.bldgTop);             // concourse pier
+    box(base,0,7.5,cz,1320,7.5,18,C.bldg2,C.bldgTop);
     box(base,0,10.5,cz,1290,2.2,15,C.glass,C.bldgTop);
-    for(let i=0;i<STANDS_PER_ROW;i++){                            // jet bridges
+    for(let i=0;i<STANDS_PER_ROW;i++){
       const x=STAND_X0+i*STAND_DX;
       box(base,x,6.2,cz-24,3.2,2.6,16,C.bridge,C.bldgTop);
       box(base,x,3.1,cz-40,2.4,3.1,2.4,C.bldg2);
     }
   }
-  /* ---- control tower, overlooking runway and apron ---- */
-  tubeY(base,240,232,0,54,10,7.2,16,C.towerShaft);
-  box(base,240,58,232,11,4.6,11,C.towerCab,C.towerTop);
-  box(base,240,63.4,232,12,1.1,12,C.towerTop);
-  tubeY(base,240,232,64.5,78,0.7,0.5,6,C.towerTop);
-  box(base,240,6,205,16,6,10,C.bldg,C.bldgTop);
-  /* radar head */
-  tubeY(base,-1500,760,0,26,2.2,1.6,8,C.bldg2);
-  box(base,-1500,28,760,7,3.5,1.2,C.bldg2,C.bldgTop);
+  /* ---- control tower, between the apron and the runway ---- */
+  tubeY(base,240,248,0,54,10,7.2,16,C.towerShaft);
+  box(base,240,58,248,11,4.6,11,C.towerCab,C.towerTop);
+  box(base,240,63.4,248,12,1.1,12,C.towerTop);
+  tubeY(base,240,248,64.5,78,0.7,0.5,6,C.towerTop);
+  box(base,240,6,272,16,6,10,C.bldg,C.bldgTop);
+  tubeY(base,-1500,860,0,26,2.2,1.6,8,C.bldg2);
+  box(base,-1500,28,860,7,3.5,1.2,C.bldg2,C.bldgTop);
   /* ---- maintenance hangars, on their own pavement west of the apron ---- */
   for(let i=0;i<2;i++){
-    const cx=-1690+i*206;
+    const cx=-1855+i*206;
     box(base,cx,17,560,98,17,80,C.hangar,C.hangarTop);
-    box(base,cx,18.5,479,98,15,2,C.glass);          // hangar door
+    box(base,cx,18.5,479,98,15,2,C.glass);
   }
-  for(let x=MAINT.x0+40;x<MAINT.x1;x+=40) slab(mark,x-0.35,x+0.35,MAINT.z0,MAINT.z1,0,C.joint);
   /* ---- perimeter tree line, for scale beyond the fence ---- */
   reseed(0x7a1b0c);
   for(let i=0;i<220;i++){
     const side=rnd()<0.5?-1:1;
     const x=rndRange(-4200,4200);
-    const z=side<0?rndRange(-2400,-620):rndRange(1700,3400);
-    if(Math.abs(x)<2100&&side<0&&z>-700) continue;
+    const z=side<0?rndRange(-2600,-900):rndRange(1700,3400);
     const h=rndRange(11,21), r=h*0.36;
     tubeY(base,x,z,0,h*0.32,1.0,0.8,5,C.trunk);
     tubeY(base,x,z,h*0.30,h,r,0.2,6,rnd()<0.5?C.leaf:C.leaf2);
   }
   return {base:makeBuffer(base),mark:makeBuffer(mark)};
 }
+
 </script>
 
 <script>
@@ -663,7 +685,7 @@ function buildAircraft(kind,liv){
    keeps the arc-length at which it is passed — that is what the node
    locks below are keyed on.
    ===================================================================== */
-const TAXI_V=16.0, TURN_A=1.15, ACC=1.0, DEC=1.5;
+const TAXI_V=16.0, TURN_A=1.40, ACC=1.2, DEC=1.5;
 function buildPath(pts,radius,vmax){
   vmax=vmax||TAXI_V;
   const X=[],Z=[],VL=[],nodeS=[],nodeIdx=[],STRAIGHT=30;
@@ -726,24 +748,36 @@ function pathAt(p,s,out){
 <script>
 "use strict";
 /* ============================ separation ==============================
-   Three independent rules keep aircraft apart, and none of them may be
-   violated for the run to be valid:
+   One runway worked in mixed mode. Four rules keep everything apart:
 
-   1. NODE LOCKS  — every junction of the movement graph is a mutex. An
-      aircraft may not enter a junction it does not own. Grants go to the
-      longest-waiting requester, so no lane starves. Because the flow is
-      one-way and acyclic, an aircraft only ever waits on something ahead
-      of it, so the lock graph can never contain a cycle: no deadlock.
+   1. NODE LOCKS  — every junction is a mutex, granted to the longest
+      waiter. The wait clock starts when an aircraft first *wants* a
+      junction, so the one physically at the front of a queue wins ties.
    2. IN-TRAIL  — each aircraft projects its own path forward and brakes
-      to keep hull + hull + 30 m clear of anything on it. This is
-      geometric, so it holds through turns and merges too.
-   3. RUNWAY  — a single exclusive resource, released only once the
-      departure is airborne, then held closed for the wake-turbulence
-      interval owed to the next departure.
+      to keep hull + hull + 30 m clear of anything standing on it.
+   3. RUNWAY  — one exclusive resource contested by arrivals and
+      departures. Arrivals outrank departures: a departure is only
+      released if it can be airborne before the next arrival needs the
+      runway, and an arrival that cannot have it goes around.
+   4. VACATE GUARANTEE — an arrival is only cleared to land when its
+      rapid exit is clear, so a landing aircraft can always get off the
+      runway. Without it a blocked exit would lock the runway, and with
+      the runway locked nothing else on the field can drain either.
    ===================================================================== */
 const SIM_DT=0.25, INTRAIL_BUF=30, LOOKAHEAD=200, LOOK_STEP=10;
-const ROLL_ACC=2.2, PUSH_V=3.4, PUSH_DIST=STAND_OFF, STARTUP_T=22;
+const ROLL_ACC=2.2, PUSH_V=3.4, STARTUP_T=22, DEC_LAND=2.2;
 const WAKE={HH:35,HM:75,HL:95,MH:30,MM:35,ML:55,LH:30,LM:30,LL:35};
+const ARR_CLAIM=22;        // s before the threshold at which an arrival takes the runway
+const LINEUP_T=34;         // s to taxi from the holding point into position
+const ROLL_CLEAR=42;       // s from brake release to airborne and clear (measured 35)
+const GA_GATE=1000;        // m from the threshold: last point a go-around is flown
+const GA_EARLY=4200;       // m: break off this far out if a departure is still
+                           // on the runway, so the missed approach starts high
+const ARR_INTERVAL=300;    // s between inbounds — a steady arrival stream against
+                           // the morning's departure bank
+const APPROACH_START=13000;// m: where an inbound joins final, ~3 min out
+const HOLD_C=[RWY.x0-12000,-4200], HOLD_R=2600;   // holding stack, laterally offset
+const MAX_SLOTS=130;       // render slots, recycled as departures leave
 
 let nodes=[], nodeById=new Map();
 function mkNode(id,x,z,merge){
@@ -752,49 +786,100 @@ function mkNode(id,x,z,merge){
   n={id,x,z,merge:!!merge,owner:null,bestAc:null,bestWait:-1,bestPri:-1};
   nodes.push(n); nodeById.set(id,n); return n;
 }
-const RUNWAY_GUARD={id:"RWY09",runway:true,x:HOLD[0],z:HOLD[1],owner:null,bestAc:null,bestWait:-1,bestPri:-1};
+const RUNWAY_GUARD={id:"RWY09",runway:true,x:HOLD[0],z:HOLD[1],
+                    owner:null,bestAc:null,bestWait:-1,bestPri:-1};
 
 /* ------------------------- route construction ----------------------- */
-const pathCache=new Map();
-function routeFor(r,i){
+const depCache=new Map(), arrCache=new Map();
+function routeFor(r,i){                       // departure: stand -> runway 09
   const key=r+":"+i;
-  if(pathCache.has(key)) return pathCache.get(key);
+  if(depCache.has(key)) return depCache.get(key);
   const lz=LANE_Z[r], pts=[], refs=[];
   const add=(x,z,node)=>{ pts.push([x,z]); refs.push(node||null); };
-  add(STAND_X0+i*STAND_DX,lz,mkNode("L"+r+"_"+i,STAND_X0+i*STAND_DX,lz));
-  for(let j=i+1;j<STANDS_PER_ROW;j++){
+  for(let j=i;j<STANDS_PER_ROW;j++){
     const x=STAND_X0+j*STAND_DX; add(x,lz,mkNode("L"+r+"_"+j,x,lz));
   }
-  /* C0..C2 are true merges: a taxilane joins the southbound collector
-     there. C3 is only the head of the collector, so it needs no box rule. */
+  /* C0..C2 are true merges: a taxilane joins the southbound collector there */
   add(COLLECT_X,lz,mkNode("C"+r,COLLECT_X,lz,r<3));
   for(let k=r-1;k>=0;k--) add(COLLECT_X,LANE_Z[k],mkNode("C"+k,COLLECT_X,LANE_Z[k],k<3));
   add(COLLECT_X,TWY_A_Z,mkNode("CJ",COLLECT_X,TWY_A_Z));
-  add(HOLD[0],HOLD[1],RUNWAY_GUARD);                    // hold short of 09
-  add(HOLD[0],0,null);                                  // turn onto centreline
-  add(RWY.x1+900,0,null);                               // roll out east
+  add(HOLD[0],HOLD[1],RUNWAY_GUARD);          // hold short of 09
+  add(HOLD[0],0,null);                        // turn onto the centreline
+  add(RWY.x1+900,0,null);                     // roll out east
   const path=buildPath(pts,45,TAXI_V);
   const list=[];
   for(let k=0;k<refs.length;k++) if(refs[k]) list.push({node:refs[k],s:path.nodeS[k]});
   const out={path,list,sRunway:path.nodeS[refs.indexOf(RUNWAY_GUARD)+1]};
-  pathCache.set(key,out); return out;
+  depCache.set(key,out); return out;
+}
+function arrivalRouteFor(ex,r,i){             // arrival: touchdown -> stand
+  const key=ex+":"+r+":"+i;
+  if(arrCache.has(key)) return arrCache.get(key);
+  const lz=LANE_Z[r], ax=EXITS[ex], pts=[], refs=[];
+  const add=(x,z,node)=>{ pts.push([x,z]); refs.push(node||null); };
+  add(TOUCHDOWN,0,null);
+  add(ax,0,null);                                                  // turn off the runway
+  add(ax,TWY_B_Z,mkNode("BJ"+ex,ax,TWY_B_Z,true));                 // join BRAVO
+  add(ARR_W,TWY_B_Z,mkNode("BW",ARR_W,TWY_B_Z,true));              // turn north into the apron
+  for(let k=0;k<=r;k++) add(ARR_W,LANE_Z[k],mkNode("AS"+k,ARR_W,LANE_Z[k],true));
+  for(let j=0;j<=i;j++){
+    const x=STAND_X0+j*STAND_DX; add(x,lz,mkNode("L"+r+"_"+j,x,lz));
+  }
+  add(STAND_X0+i*STAND_DX,lz+STAND_OFF,null);                      // on stand
+  const path=buildPath(pts,45,TAXI_V);
+  const sExit=path.nodeS[2];                                       // BRAVO junction
+  const out={path,list:[],sExit};
+  for(let k=0;k<refs.length;k++) if(refs[k]) out.list.push({node:refs[k],s:path.nodeS[k]});
+  /* the landing roll runs at approach speed until it must slow for the
+     turn-off; re-run the braking pass with landing deceleration */
+  for(let k=0;k<path.n;k++) if(Math.abs(path.Z[k])<25) path.VL[k]=95;
+  for(let k=path.n-2;k>=0;k--){
+    const ds=path.S[k+1]-path.S[k];
+    path.VL[k]=Math.min(path.VL[k],Math.sqrt(path.VL[k+1]*path.VL[k+1]+2*DEC_LAND*ds));
+  }
+  /* the point at which the aircraft is clear of the runway strip */
+  out.sVacate=path.len;
+  for(let k=0;k<path.n;k++) if(path.Z[k]>=112){ out.sVacate=path.S[k]; break; }
+  arrCache.set(key,out); return out;
 }
 function pushPathFor(r,i){
   const x=STAND_X0+i*STAND_DX;
   return buildPath([[x,LANE_Z[r]+STAND_OFF],[x,LANE_Z[r]]],10,PUSH_V);
 }
 
-/* ------------------------------- fleet ------------------------------ */
-let air=[], simT=0, departed=0, runway={owner:null,vacatedAt:-999,lastWake:"M",need:0};
-let conflictPairs=new Set(), minGap=Infinity, running=true;
+/* ------------------------------- state ------------------------------ */
+let air=[], simT=0, departed=0, landed=0, goArounds=0, nextId=0;
+let runway={owner:null,lineup:null,vacatedAt:-999,lastWake:"M",need:0};
+let conflictPairs=new Set(), minGap=Infinity;
+let freeStands=[], slotPool=[], nextArrivalAt=240, pruneWanted=false;
 const tmp={x:0,z:0,h:0,v:0};
+
+function newAircraft(kind,liv,slot){
+  const F=FLEET[kind];
+  return {
+    id:nextId++, kind, F, liv, slot,
+    type:F.types[rndInt(F.types.length)],
+    cs:liv.icao+String(110+rndInt(880)),
+    sid:SIDS[rndInt(SIDS.length)],
+    hull:Math.max(F.len,F.span)/2, vref:F.vr*0.92,
+    phase:"wait", s:0, v:0, idx:0, timer:0,
+    x:0, z:0, y:0, h:0, pitch:0, bank:0,
+    owned:new Set(), reqNode:null, reqTarget:null, reqSince:0,
+    trailLimit:Infinity, stopLimit:Infinity, nextBlock:null,
+    dirty:true, turnDir:(nextId%2?1:-1)
+  };
+}
+const standName=(r,i)=>["A","B","C","D"][r]+String(i+1).padStart(2,"0");
 
 function makeFleet(){
   reseed(0x1CA0DEF);
-  nodes=[]; nodeById=new Map(); pathCache.clear();
+  nodes=[]; nodeById=new Map(); depCache.clear(); arrCache.clear();
   RUNWAY_GUARD.owner=null; RUNWAY_GUARD.bestAc=null;
-  air=[]; simT=0; departed=0; conflictPairs=new Set(); minGap=Infinity;
-  runway={owner:null,vacatedAt:-999,lastWake:"M",need:0};
+  air=[]; simT=0; departed=0; landed=0; goArounds=0; nextId=0;
+  conflictPairs=new Set(); minGap=Infinity; pruneWanted=false;
+  runway={owner:null,lineup:null,vacatedAt:-999,lastWake:"M",need:0};
+  freeStands=[]; nextArrivalAt=240;
+  slotPool=[]; for(let k=MAX_SLOTS-1;k>=100;k--) slotPool.push(k);
 
   const slots=[];
   for(let r=0;r<4;r++) for(let i=0;i<STANDS_PER_ROW;i++) slots.push([r,i]);
@@ -804,26 +889,52 @@ function makeFleet(){
     const [r,i]=slots[k];
     const roll=rnd();
     const kind=roll<0.20?"H":(roll<0.76?"M":"L");
-    const F=FLEET[kind], liv=LIVERY[rndInt(LIVERY.length)];
+    const a=newAircraft(kind,LIVERY[rndInt(LIVERY.length)],k);
     const route=routeFor(r,i);
-    const ac={
-      id:k, kind, F, liv, r0:r, i0:i,
-      type:F.types[rndInt(F.types.length)],
-      cs:liv.icao+String(110+rndInt(880)),
-      sid:SIDS[rndInt(SIDS.length)],
-      stand:(["A","B","C","D"][r])+String(i+1).padStart(2,"0"),
-      hull:Math.max(F.len,F.span)/2,
-      path:route.path, nodeList:route.list, sRunway:route.sRunway,
-      pushPath:pushPathFor(r,i),
-      offBlock: k<14 ? k*18+rndRange(0,6) : 252+(k-13)*62+rndRange(-9,9),
-      phase:"wait", s:0, v:0, idx:0, timer:0,
-      x:STAND_X0+i*STAND_DX, z:LANE_Z[r]+STAND_OFF, y:0,
-      h:Math.PI/2, pitch:0, bank:0,
-      owned:new Set(), reqNode:null, reqSince:0, stopLimit:Infinity,
-      slot:k, dirty:true, turnDir:(k%2?1:-1)
-    };
-    air.push(ac);
+    a.role="dep"; a.r0=r; a.i0=i; a.stand=standName(r,i);
+    a.path=route.path; a.nodeList=route.list; a.sRunway=route.sRunway;
+    a.pushPath=pushPathFor(r,i);
+    a.offBlock = k<14 ? k*18+rndRange(0,6) : 252+(k-13)*62+rndRange(-9,9);
+    a.x=STAND_X0+i*STAND_DX; a.z=LANE_Z[r]+STAND_OFF; a.h=Math.PI/2;
+    air.push(a);
   }
+}
+
+/* an inbound only appears when there is a stand for it — ground stand
+   allocation is what bounds how many aircraft the field can hold */
+const onFinal=()=>air.some(a=>a.phase==="approach");
+function joinFinal(a){
+  a.phase="approach"; a.v=a.vref+8; a.h=0; a.pitch=-0.048; a.bank=0;
+  a.x=RWY.x0-APPROACH_START;
+  a.y=APPROACH_START*Math.tan(3*Math.PI/180)+15; a.z=0; a.dirty=true;
+}
+function spawnArrival(){
+  if(simT<nextArrivalAt||departed>=100||!freeStands.length||!slotPool.length) return;
+  if(onFinal()) return;                       // final is a queue of one
+  let best=0;
+  for(let k=1;k<freeStands.length;k++)              // westernmost stand: shortest taxi in
+    if(freeStands[k][0]*4000+freeStands[k][1]<freeStands[best][0]*4000+freeStands[best][1]) best=k;
+  const [r,i]=freeStands.splice(best,1)[0];
+  const roll=rnd();
+  const kind=roll<0.20?"H":(roll<0.76?"M":"L");
+  const a=newAircraft(kind,LIVERY[rndInt(LIVERY.length)],slotPool.pop());
+  const ex=kind==="H"?2:(kind==="M"?1:0);
+  const route=arrivalRouteFor(ex,r,i);
+  a.role="arr"; a.r0=r; a.i0=i; a.stand=standName(r,i); a.exit=ex;
+  a.path=route.path; a.nodeList=route.list;
+  a.sVacate=route.sVacate; a.sExit=route.sExit; a.sRunway=Infinity;
+  joinFinal(a);
+  air.push(a);
+  nextArrivalAt=simT+ARR_INTERVAL;
+}
+/* a go-around does not simply re-appear on final: it joins the stack and
+   waits its turn, which is also what stops inbounds piling up on top of
+   each other when the runway is busy */
+function enterHold(a){
+  let k=0; for(const o of air) if(o.phase==="holding") k++;
+  a.phase="holding"; a.holdAlt=1100+350*Math.min(k,4);
+  a.holdAng=Math.atan2(a.z-HOLD_C[1],a.x-HOLD_C[0]);
+  a.holdSince=simT; a.bank=0.26; a.pitch=0; a.dirty=true;
 }
 
 /* --------------------------- spatial grid --------------------------- */
@@ -853,9 +964,10 @@ function neighboursAt(px,pz,rad,skip){
 
 /* --------------------- forward path sampling ------------------------ */
 const _sx=new Float64Array(40), _sz=new Float64Array(40);
-function lookAhead(a,maxD){
+function lookAhead(a,maxD,step){
+  step=step||LOOK_STEP;
   const p=a.path; let i=a.idx, n=0;
-  for(let d=LOOK_STEP; d<=maxD && n<40; d+=LOOK_STEP){
+  for(let d=step; d<=maxD && n<40; d+=step){
     const t=a.s+d;
     if(t>=p.len) break;
     while(i<p.n-1&&p.S[i+1]<t) i++;
@@ -864,17 +976,15 @@ function lookAhead(a,maxD){
   }
   return n;
 }
-const GROUND_PHASES={taxi:1,hold:1,lineup:1,roll:1};
+const GROUND_PHASES={taxi:1,hold:1,lineup:1,roll:1,rollout:1,taxiin:1};
+const AIR_PHASES={approach:1,climb:1,goaround:1,holding:1};
 const PUSH_CLEAR=190;
-/* does o still have node n ahead of it on its own route? */
 function willUse(o,n){
   for(const e of o.nodeList) if(e.node===n&&e.s>o.s-20) return true;
   return false;
 }
-/* approve a push only if no moving aircraft is closing on that junction */
 function laneClearForPush(a,n){
-  const near=neighboursAt(n.x,n.z,PUSH_CLEAR,a);
-  for(const o of near){
+  for(const o of neighboursAt(n.x,n.z,PUSH_CLEAR,a)){
     if(!GROUND_PHASES[o.phase]) continue;
     if(Math.hypot(o.x-n.x,o.z-n.z)>PUSH_CLEAR) continue;
     if(!willUse(o,n)) continue;
@@ -882,50 +992,76 @@ function laneClearForPush(a,n){
   }
   return true;
 }
+/* an arrival may only be cleared to land if it can definitely get off */
+/* Only traffic actually on BRAVO or on the exit itself can stop an arrival
+   getting off. Departures on apron lane A pass within 130 m of the exit
+   junctions, and the runway is 170 m the other way; neither is in the way. */
+function exitClear(ex){
+  const jx=EXITS[ex], jz=TWY_B_Z;
+  for(const o of neighboursAt(jx,jz,260,null)){
+    if(!GROUND_PHASES[o.phase]) continue;
+    if(o.z<TWY_B_Z-55||o.z>TWY_B_Z+80) continue;
+    if(Math.hypot(o.x-jx,o.z-jz)<260) return false;
+  }
+  return true;
+}
+/* Pick the exit this arrival will actually use: its class preference first,
+   but any exit it can brake for will do if the preferred one is occupied. */
+const EXIT_PREF={H:[2,1,0],M:[1,2,0],L:[0,1,2]};
+function chooseExit(a){
+  for(const e of EXIT_PREF[a.kind]) if(exitClear(e)) return e;
+  return -1;
+}
+function assignExit(a,e){
+  if(a.exit===e) return;
+  const route=arrivalRouteFor(e,a.r0,a.i0);
+  a.exit=e; a.path=route.path; a.nodeList=route.list;
+  a.sVacate=route.sVacate; a.sExit=route.sExit;
+}
 
-/* ------------------------------- step -------------------------------
-   Order matters. In-trail limits are geometric and do not depend on who
-   holds which lock, so they are computed first; the lock requests then
-   use them to refuse any merge the aircraft could not clear.
-   -------------------------------------------------------------------- */
-const HULL_MAX=32;                          // largest hull radius in the fleet
-/* how far short of a junction an aircraft must stop: far enough that it
-   never intrudes on another branch's path through that junction */
+/* ------------------------------- step ------------------------------- */
+const HULL_MAX=32;
 function blockBack(a){ return a.hull+HULL_MAX+INTRAIL_BUF+5; }
 
 function computeTrailLimit(a){
   let limit=Infinity;
-  const near=neighbours(a,LOOKAHEAD+60);
+  /* a landing roll at 70 m/s needs more than a kilometre to stop, so the
+     scan reaches as far as this aircraft could actually need to brake */
+  const reach=Math.max(LOOKAHEAD,a.v*a.v/(2*DEC_LAND)+140);
+  const near=neighbours(a,reach+60);
   if(!near.length) return limit;
   let far=0;
   for(const o of near){
     const d=Math.hypot(o.x-a.x,o.z-a.z);
-    if(d<LOOKAHEAD+60&&d>far) far=d;
+    if(d<reach+60&&d>far) far=d;
   }
-  const ns=lookAhead(a,Math.min(LOOKAHEAD,far+60));
+  const span=Math.min(reach,far+60), stepD=Math.max(LOOK_STEP,span/36);
+  const ns=lookAhead(a,span,stepD);
   const fx=Math.cos(a.h), fz=Math.sin(a.h);
   for(const o of near){
-    if(o.phase==="gone"||o.phase==="climb") continue;
-    if((o.x-a.x)*fx+(o.z-a.z)*fz<=0) continue;              // behind us
+    if(o.phase==="gone"||AIR_PHASES[o.phase]) continue;
+    if((o.x-a.x)*fx+(o.z-a.z)*fz<=0) continue;
     const need=a.hull+o.hull+INTRAIL_BUF;
     for(let k=0;k<ns;k++){
       const dd=Math.hypot(_sx[k]-o.x,_sz[k]-o.z);
       if(dd<need){
         const prev=k>0?Math.hypot(_sx[k-1]-o.x,_sz[k-1]-o.z):Math.hypot(a.x-o.x,a.z-o.z);
         const t=prev>dd?clamp((prev-need)/(prev-dd),0,1):0;
-        limit=Math.min(limit,a.s+Math.max(0,(k*LOOK_STEP)+(t-1)*LOOK_STEP));
+        limit=Math.min(limit,a.s+Math.max(0,(k*stepD)+(t-1)*stepD));
         break;
       }
     }
   }
   return limit;
 }
+const timeToThreshold=a=>(RWY.x0-a.x)/Math.max(25,a.v);
 
 function step(dt){
   simT+=dt;
+  if(pruneWanted){ air=air.filter(a=>a.phase!=="gone"); pruneWanted=false; }
+  spawnArrival();
   rebuildGrid();
 
-  /* ---- phase 0: geometric in-trail limits ---- */
   for(const a of air) a.trailLimit=GROUND_PHASES[a.phase]?computeTrailLimit(a):Infinity;
 
   /* ---- phase 1: release passed nodes, post one request each ---- */
@@ -933,8 +1069,6 @@ function step(dt){
   RUNWAY_GUARD.bestAc=null; RUNWAY_GUARD.bestWait=-1; RUNWAY_GUARD.bestPri=-1;
 
   for(const a of air){
-    /* an aircraft still on stand queues for its taxilane junction like
-       everybody else, and never outranks one already rolling */
     if(a.phase==="wait"){
       if(simT>=a.offBlock){
         const n=a.nodeList[0].node;
@@ -951,30 +1085,21 @@ function step(dt){
 
     const back=blockBack(a);
     for(const e of a.nodeList){
-      if(e.node.runway) continue;                 // released on departure instead
+      if(e.node.runway) continue;
       if(a.owned.has(e.node)&&a.s-e.s>back){ a.owned.delete(e.node); e.node.owner=null; }
     }
-    /* look far enough ahead to actually stop: braking distance from taxi
-       speed plus the clearance we must leave in front of the junction */
     const horizon=back+130;
     a.nextBlock=null; a.reqNode=null;
     for(const e of a.nodeList){
       if(e.s<a.s-1) continue;
       if(e.s>a.s+horizon) break;
       if(a.owned.has(e.node)) continue;
-      /* the wait clock starts the moment we want the junction, not when it
-         happens to fall free. Otherwise everyone queued behind a held node
-         starts from zero together, and the tie can be won by an aircraft
-         further back — which then holds a junction it cannot reach. */
       if(a.reqTarget!==e.node){ a.reqTarget=e.node; a.reqSince=simT; }
       if(e.node.owner!==null){ a.nextBlock=e.s; break; }
       if(e.node.merge){
-        /* never enter a merge we could not clear: an aircraft stopped inside
-           a junction blocks the branch it is not even using, and that is what
-           turns two busy queues into a deadlock */
         if(a.trailLimit<e.s+back){ a.nextBlock=e.s; break; }
       } else if(a.trailLimit<e.s){
-        break;                    // traffic stops us short of it anyway
+        break;
       }
       a.reqNode=e.node; a.reqAt=e.s;
       const w=simT-a.reqSince;
@@ -984,22 +1109,83 @@ function step(dt){
     }
   }
 
-  /* ---- phase 2: resolve grants, longest waiter first ---- */
+  /* ---- phase 2: node grants ---- */
   for(const n of nodes){
     if(n.owner===null&&n.bestAc){ n.owner=n.bestAc; n.bestAc.owned.add(n);
       n.bestAc.reqTarget=null; n.bestAc.reqSince=0; }
   }
-  if(RUNWAY_GUARD.owner===null&&RUNWAY_GUARD.bestAc&&runway.owner===null){
+
+  /* ---- phase 2b: the runway ----
+     Taxiing into position takes half a minute, and doing that serially with
+     the runway is what caps a single-runway airport. So position clearance
+     is a second, weaker resource: an aircraft may occupy the threshold while
+     the previous movement is still rolling out, and only takes the runway
+     itself when it is actually free. It is issued only if the aircraft can
+     be airborne and clear before the next arrival needs the runway. */
+  let nextArr=null, nextArrT=Infinity;
+  for(const a of air){
+    if(a.phase!=="approach") continue;
+    const t=timeToThreshold(a);
+    if(t<nextArrT){ nextArrT=t; nextArr=a; }
+  }
+  if(runway.owner===null&&runway.lineup){            // in position -> cleared for take-off
+    const a=runway.lineup;
+    const need=WAKE[runway.lastWake+a.F.wake];
+    runway.need=need;
+    if(simT>=runway.vacatedAt+need&&a.s>=a.sRunway-6){
+      runway.owner=a; runway.lineup=null;
+      RUNWAY_GUARD.owner=null; a.owned.delete(RUNWAY_GUARD);
+    }
+  }
+  if(runway.owner===null&&runway.lineup===null){     // otherwise an arrival may have it
+    const ex=nextArr&&nextArrT<ARR_CLAIM?chooseExit(nextArr):-1;
+    if(ex>=0){ assignExit(nextArr,ex); runway.owner=nextArr; }
+  }
+  if(runway.lineup===null&&RUNWAY_GUARD.owner===null&&RUNWAY_GUARD.bestAc){
     const a=RUNWAY_GUARD.bestAc;
-    runway.need=WAKE[runway.lastWake+a.F.wake];
-    if(simT>=runway.vacatedAt+runway.need){
+    const need=WAKE[runway.lastWake+a.F.wake];
+    const readyAt=Math.max(simT+LINEUP_T,runway.vacatedAt+need);
+    /* never taxi onto the runway under a landing aircraft, or in front of
+       one that has not yet gone through */
+    /* line up behind a movement that is already 600 m down the runway and
+       moving away, which is what a real tower issues */
+    const behindClear=runway.owner===null||runway.owner.x>-1000;
+    if(behindClear&&readyAt+ROLL_CLEAR+ARR_CLAIM+16<=simT+nextArrT){
       RUNWAY_GUARD.owner=a; a.owned.add(RUNWAY_GUARD); a.reqTarget=null; a.reqSince=0;
-      runway.owner=a; a.phase="lineup";
+      runway.lineup=a; a.phase="lineup"; runway.need=need;
+    }
+  }
+  /* Anything on final that will not have the runway goes around. Breaking
+     off early when a departure is still on the ground keeps the missed
+     approach well above and clear of the aircraft climbing out below it. */
+  const blocker=runway.owner;
+  const groundBlock=blocker&&blocker!==nextArr&&(blocker.phase==="lineup"||blocker.phase==="roll");
+  /* when the departure below will actually be gone */
+  let clearAt=-Infinity;
+  if(groundBlock){
+    if(blocker.phase==="roll") clearAt=(blocker.rollStart!==undefined?blocker.rollStart:simT)+ROLL_CLEAR;
+    else {
+      const toPos=Math.max(0,blocker.sRunway-4-blocker.s)/8;
+      clearAt=Math.max(simT+toPos,runway.vacatedAt+(runway.need||0))+ROLL_CLEAR;
+    }
+  }
+  for(const a of air){
+    if(a.phase!=="approach"||runway.owner===a) continue;
+    const d=RWY.x0-a.x;
+    /* break off early only if the departure genuinely will not be clear in
+       time — going around from 4 km keeps the missed approach above it */
+    const needsAt=simT+timeToThreshold(a)-ARR_CLAIM;
+    if(d<GA_GATE||(groundBlock&&d<GA_EARLY&&clearAt>needsAt)){
+      a.phase="goaround"; a.timer=0; a.pitch=0; goArounds++;
     }
   }
 
-  /* ---- phase 3: advance every aircraft ---- */
   for(const a of air) advance(a,dt);
+}
+
+function releaseAll(a){
+  for(const n of a.owned) if(n.owner===a) n.owner=null;
+  a.owned.clear(); a.reqTarget=null; a.reqSince=0;
 }
 
 function advance(a,dt){
@@ -1018,14 +1204,21 @@ function advance(a,dt){
     case "startup": {
       a.timer+=dt;
       a.h=angStep(a.h,0,(Math.PI/2)/STARTUP_T*dt*1.35);
-      if(a.timer>=STARTUP_T){ a.phase="taxi"; a.s=0; a.idx=0; a.v=0; a.h=0; }
+      if(a.timer>=STARTUP_T){
+        a.phase="taxi"; a.s=0; a.idx=0; a.v=0; a.h=0;
+        freeStands.push([a.r0,a.i0]);            // the stand is now available
+      }
       a.dirty=true; return;
     }
-    case "climb": return flyOut(a,dt);
-    case "gone": return;
+    case "climb":     return flyOut(a,dt);
+    case "approach":  return flyApproach(a,dt);
+    case "goaround":  return flyGoAround(a,dt);
+    case "holding":   return flyHold(a,dt);
+    case "parked":
+    case "gone":      return;
   }
 
-  /* ---------- ground movement: taxi / hold / lineup / roll ---------- */
+  /* ---------- ground movement, shared by both flows ---------- */
   const p=a.path, back=blockBack(a);
   let limit=a.trailLimit;
   if(a.nextBlock!==null&&a.nextBlock!==undefined) limit=Math.min(limit,a.nextBlock-back);
@@ -1033,13 +1226,22 @@ function advance(a,dt){
 
   pathAt(p,a.s,tmp);
   let vmax=tmp.v, acc=ACC;
-  if(a.phase==="lineup"||a.phase==="roll"){
-    if(a.s>=a.sRunway-4){
-      a.phase="roll"; vmax=200; acc=ROLL_ACC;
-      limit=Infinity;                                 // the runway is ours alone
+  if(a.role==="dep"){
+    if(a.phase==="lineup"){
+      limit=Math.min(limit,a.sRunway-4);              // hold in position
+      if(runway.owner===a){ a.phase="roll"; a.rollStart=simT; vmax=200; acc=ROLL_ACC; limit=Infinity; }
+    } else if(a.phase==="roll"){
+      vmax=200; acc=ROLL_ACC; limit=Infinity;         // the runway is ours alone
+    } else {
+      a.phase=(a.sRunway-a.s<70&&a.v<1.2)?"hold":"taxi";
     }
-  } else {
-    a.phase=(a.sRunway-a.s<70&&a.v<1.2)?"hold":"taxi";
+  } else if(a.phase==="rollout"){
+    if(a.s>=a.sVacate){                               // clear of the runway strip
+      a.phase="taxiin"; landed++;
+      if(runway.owner===a){
+        runway.owner=null; runway.vacatedAt=simT; runway.lastWake=a.F.wake;
+      }
+    }
   }
   a.stopLimit=limit;
 
@@ -1056,6 +1258,9 @@ function advance(a,dt){
     a.phase="climb"; a.pitch=0; a.y=0; a.timer=0; a.dirty=true;
     return;
   }
+  if(a.role==="arr"&&a.s>=p.len-0.5){                 // on stand
+    a.s=p.len; a.v=0; a.phase="parked"; releaseAll(a);
+  }
   pathAt(p,a.s,tmp);
   a.x=tmp.x; a.z=tmp.z; a.h=tmp.h; a.y=0; a.pitch=0; a.bank=0;
   a.dirty=true;
@@ -1067,8 +1272,8 @@ function flyOut(a,dt){
   a.v=Math.min(a.F.cruise,a.v+1.05*dt);
   a.y+=a.v*Math.sin(a.pitch)*dt;
   const hv=a.v*Math.cos(a.pitch);
-  if(a.y>260){                                        // turn onto the SID
-    const tgt=a.turnDir*0.42;
+  if(a.y>260){                                        // SIDs all turn north
+    const tgt=a.turnDir>0?0.28:0.54;
     a.h=angStep(a.h,tgt,0.040*dt);
     a.bank=angLerp(a.bank,clamp((tgt-a.h)*2.2,-0.42,0.42),Math.min(1,dt*0.8));
   } else a.bank*=Math.max(0,1-dt);
@@ -1076,15 +1281,64 @@ function flyOut(a,dt){
   a.dirty=true;
 
   if(runway.owner===a&&(a.y>40||a.x>RWY.x1)){         // runway vacated
-    runway.owner=null;
-    runway.vacatedAt=simT;
-    runway.lastWake=a.F.wake;
-    RUNWAY_GUARD.owner=null; a.owned.delete(RUNWAY_GUARD);
-    for(const n of a.owned) n.owner=null;
-    a.owned.clear();
+    runway.owner=null; runway.vacatedAt=simT; runway.lastWake=a.F.wake;
+    if(RUNWAY_GUARD.owner===a) RUNWAY_GUARD.owner=null;
+    releaseAll(a);
     departed++;
   }
-  if(a.y>2400||Math.hypot(a.x,a.z)>9000){ a.phase="gone"; a.dirty=true; }
+  if(a.y>2400||Math.hypot(a.x,a.z)>9000){
+    a.phase="gone"; a.dirty=true; pruneWanted=true;
+    if(a.slot>=0){ blankSlot(a.slot); slotPool.push(a.slot); a.slot=-1; }
+  }
+}
+
+function flyApproach(a,dt){
+  const gs=Math.tan(3*Math.PI/180);
+  a.v=Math.max(a.vref,a.v-0.30*dt);
+  a.x+=a.v*dt; a.z=0; a.h=0; a.bank=0;
+  const toThr=RWY.x0-a.x;
+  if(toThr>0){ a.y=toThr*gs+15; a.pitch=-0.048; }
+  else {                                              // flare onto the touchdown zone
+    const f=clamp((a.x-RWY.x0)/300,0,1);
+    a.y=15*(1-f)*(1-f); a.pitch=lerp(-0.048,0.055,f);
+    if(a.x>=TOUCHDOWN){
+      a.phase="rollout"; a.s=0; a.idx=0; a.y=0; a.pitch=0;
+      a.x=TOUCHDOWN; a.v=Math.min(a.v,a.vref);
+    }
+  }
+  a.dirty=true;
+}
+
+function flyGoAround(a,dt){
+  a.timer+=dt;
+  a.pitch=Math.min(0.155,a.pitch+0.11*dt);            // climb harder than a SID
+  a.v=Math.min(a.F.cruise*0.8,a.v+0.9*dt);
+  a.y+=a.v*Math.sin(a.pitch)*dt;
+  const hv=a.v*Math.cos(a.pitch);
+  if(a.y>70){                                         // turn south at once, away
+    const tgt=Math.atan2(HOLD_C[1]-a.z,HOLD_C[0]-a.x); // from every departure track
+    let d=((tgt-a.h+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
+    a.h=angStep(a.h,tgt,0.032*dt);
+    a.bank=angLerp(a.bank,clamp(d*1.6,-0.34,0.34),Math.min(1,dt*0.7));
+  }
+  a.x+=Math.cos(a.h)*hv*dt; a.z+=Math.sin(a.h)*hv*dt;
+  a.dirty=true;
+  if(Math.hypot(a.x-HOLD_C[0],a.z-HOLD_C[1])<HOLD_R*1.25&&a.y>760) enterHold(a);
+}
+/* a lazy left-hand racetrack, stacked by altitude, lowest goes first */
+function flyHold(a,dt){
+  a.v=Math.max(a.vref+14,a.v-0.6*dt);
+  a.holdAng+=(a.v/HOLD_R)*dt;
+  a.x=HOLD_C[0]+Math.cos(a.holdAng)*HOLD_R;
+  a.z=HOLD_C[1]+Math.sin(a.holdAng)*HOLD_R;
+  a.h=a.holdAng+Math.PI/2;
+  a.y=lerp(a.y,a.holdAlt,Math.min(1,dt*0.25));
+  a.bank=0.26; a.pitch=0; a.dirty=true;
+  if(onFinal()) return;
+  let first=a;                                        // longest hold, then lowest
+  for(const o of air) if(o.phase==="holding"&&
+    (o.holdSince<first.holdSince||(o.holdSince===first.holdSince&&o.holdAlt<first.holdAlt))) first=o;
+  if(first===a) joinFinal(a);
 }
 
 /* ---------------------- independent conflict audit ------------------ */
@@ -1098,20 +1352,33 @@ function auditSeparation(){
       const d=Math.hypot(o.x-a.x,o.z-a.z,(o.y||0)-(a.y||0));
       const gap=d-a.hull-o.hull;
       if(gap<worst) worst=gap;
-      if(gap<0) conflictPairs.add(a.id*1000+o.id);
+      if(gap<0) conflictPairs.add(a.id*100000+o.id);
     }
   }
   if(worst<Infinity) minGap=worst;
   return worst;
 }
+/* separation between anything airborne, measured without the ground grid */
+function auditAir(){
+  let worst=Infinity;
+  const up=[];
+  for(const a of air) if(AIR_PHASES[a.phase]) up.push(a);
+  for(let i=0;i<up.length;i++) for(let j=i+1;j<up.length;j++){
+    const a=up[i],o=up[j];
+    const d=Math.hypot(o.x-a.x,o.z-a.z,o.y-a.y);
+    if(d<worst) worst=d;
+  }
+  return worst;
+}
+
 </script>
 
 <script>
 "use strict";
 /* ===================== dynamic aircraft rendering =====================
-   Every aircraft owns a fixed slot in one vertex buffer. Only slots that
-   actually moved this frame are re-transformed and re-uploaded, so a
-   full apron of parked aircraft costs nothing to keep on screen.
+   Every aircraft owns a slot in one vertex buffer, and slots are recycled
+   as departures leave the area, so arrivals cost nothing extra. Only slots
+   that actually moved are re-transformed and re-uploaded.
    ===================================================================== */
 let TPL=[], SLOT_V=0, acPos=null, acCol=null, acBuf=null, shBuf=null, shPos=null, shCol=null;
 const SH_V=12;
@@ -1124,40 +1391,43 @@ function buildTemplates(){
       pos:new Float32Array(m.pos),nrm:new Float32Array(m.nrm),col:new Float32Array(m.col)});
     SLOT_V=Math.max(SLOT_V,m.pos.length/3);
   }
-  acPos=new Float32Array(100*SLOT_V*3); acCol=new Float32Array(100*SLOT_V*3);
-  shPos=new Float32Array(100*SH_V*3);   shCol=new Float32Array(100*SH_V*3);
+  acPos=new Float32Array(MAX_SLOTS*SLOT_V*3); acCol=new Float32Array(MAX_SLOTS*SLOT_V*3);
+  shPos=new Float32Array(MAX_SLOTS*SH_V*3);   shCol=new Float32Array(MAX_SLOTS*SH_V*3);
   const mk=(arr)=>{ const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b);
     gl.bufferData(gl.ARRAY_BUFFER,arr,gl.DYNAMIC_DRAW); return b; };
-  acBuf={posB:mk(acPos),colB:mk(acCol),count:100*SLOT_V};
-  shBuf={posB:mk(shPos),colB:mk(shCol),count:100*SH_V};
+  acBuf={posB:mk(acPos),colB:mk(acCol),count:MAX_SLOTS*SLOT_V};
+  shBuf={posB:mk(shPos),colB:mk(shCol),count:MAX_SLOTS*SH_V};
 }
 function tplIndex(kind,li){ return (kind==="H"?0:kind==="M"?1:2)*LIVERY.length+li; }
 
 const _R=new Float64Array(9);
 function rot(h,p,b){
   const ch=Math.cos(h),sh=Math.sin(h),cp=Math.cos(p),sp=Math.sin(p),cb=Math.cos(b),sb=Math.sin(b);
-  /* yaw * pitch * bank, columns are the images of local X, Y, Z */
-  const p00=cp,p01=-sp,p02=0, p10=sp,p11=cp,p12=0, p20=0,p21=0,p22=1;
-  const b00=1,b01=0,b02=0, b10=0,b11=cb,b12=-sb, b20=0,b21=sb,b22=cb;
-  const q00=p00*b00+p01*b10+p02*b20, q01=p00*b01+p01*b11+p02*b21, q02=p00*b02+p01*b12+p02*b22;
-  const q10=p10*b00+p11*b10+p12*b20, q11=p10*b01+p11*b11+p12*b21, q12=p10*b02+p11*b12+p12*b22;
-  const q20=p20*b00+p21*b10+p22*b20, q21=p20*b01+p21*b11+p22*b21, q22=p20*b02+p21*b12+p22*b22;
-  _R[0]=ch*q00-sh*q20; _R[1]=ch*q01-sh*q21; _R[2]=ch*q02-sh*q22;
-  _R[3]=q10;           _R[4]=q11;           _R[5]=q12;
-  _R[6]=sh*q00+ch*q20; _R[7]=sh*q01+ch*q21; _R[8]=sh*q02+ch*q22;
+  const p00=cp,p01=-sp,p10=sp,p11=cp;
+  const q00=p00, q01=p01*cb, q02=-p01*sb;
+  const q10=p10, q11=p11*cb, q12=-p11*sb;
+  const q20=0,   q21=sb,     q22=cb;
+  _R[0]=ch*q00; _R[1]=ch*q01-sh*q21; _R[2]=ch*q02-sh*q22;
+  _R[3]=q10;    _R[4]=q11;           _R[5]=q12;
+  _R[6]=sh*q00; _R[7]=sh*q01+ch*q21; _R[8]=sh*q02+ch*q22;
 }
-const GROUND_SHADE=[C.concrete[0]*0.50,C.concrete[1]*0.50,C.concrete[2]*0.50];
-
+function blankSlot(slot){
+  if(slot<0) return;
+  const o=slot*SLOT_V*3;
+  for(let i=0;i<SLOT_V*3;i+=3){ acPos[o+i]=0; acPos[o+i+1]=-9000; acPos[o+i+2]=0;
+    acCol[o+i]=0; acCol[o+i+1]=0; acCol[o+i+2]=0; }
+  const q=slot*SH_V*3;
+  for(let i=0;i<SH_V*3;i+=3){ shPos[q+i]=0; shPos[q+i+1]=-9000; shPos[q+i+2]=0;
+    shCol[q+i]=0; shCol[q+i+1]=0; shCol[q+i+2]=0; }
+  if(acBuf) uploadRange(slot);
+}
 function writeSlot(a){
-  const o=a.slot*SLOT_V*3;
-  if(a.phase==="gone"){
-    for(let i=0;i<SLOT_V*3;i+=3){ acPos[o+i]=0; acPos[o+i+1]=-9000; acPos[o+i+2]=0;
-      acCol[o+i]=0; acCol[o+i+1]=0; acCol[o+i+2]=0; }
-    for(let i=0;i<SH_V*3;i+=3){ const q=a.slot*SH_V*3+i;
-      shPos[q]=0; shPos[q+1]=-9000; shPos[q+2]=0; shCol[q]=0; shCol[q+1]=0; shCol[q+2]=0; }
-    return;
-  }
-  const t=TPL[a.tpl];
+  if(a.slot<0) return;
+  if(a.phase==="gone"){ blankSlot(a.slot); return; }
+  /* aircraft created mid-run pick up their template here: resetSim only ever
+     sees the ones that exist when the run starts */
+  if(a.tpl===undefined) a.tpl=tplIndex(a.kind,LIVERY.indexOf(a.liv));
+  const o=a.slot*SLOT_V*3, t=TPL[a.tpl];
   rot(a.h,a.pitch,a.bank);
   const r=_R, px=a.x, py=a.y, pz=a.z;
   for(let i=0,j=0;i<t.n;i++,j+=3){
@@ -1177,24 +1447,25 @@ function writeSlot(a){
   /* ground shadow: a fuselage strip crossed by a wing strip */
   const q=a.slot*SH_V*3, F=a.F, ch=Math.cos(a.h), sh2=Math.sin(a.h);
   const fade=a.y>0?Math.max(0,1-a.y/260):1;
-  const hide=fade<=0.02;
+  const hide=fade<=0.02, onRwy=Math.abs(a.z)<RWY.shoulder;
+  const lit=onRwy?C.asphalt:C.concrete;
   let w=0;
   const put=(fx,fz)=>{ const X=px+ch*fx-sh2*fz, Z=pz+sh2*fx+ch*fz;
     shPos[q+w]=X; shPos[q+w+1]=hide?-9000:0.0; shPos[q+w+2]=Z;
-    const g=lerp(C.concrete[0]*0.92,GROUND_SHADE[0],fade);
-    shCol[q+w]=g; shCol[q+w+1]=lerp(C.concrete[1]*0.92,GROUND_SHADE[1],fade);
-    shCol[q+w+2]=lerp(C.concrete[2]*0.92,GROUND_SHADE[2],fade); w+=3; };
+    shCol[q+w]  =lerp(lit[0]*0.94,lit[0]*0.5,fade);
+    shCol[q+w+1]=lerp(lit[1]*0.94,lit[1]*0.5,fade);
+    shCol[q+w+2]=lerp(lit[2]*0.94,lit[2]*0.5,fade); w+=3; };
   const L2=F.len/2, S2=F.span/2, fw=F.fuseR*1.5, sw=F.len*0.09;
   put(-L2,-fw); put(L2,-fw); put(L2,fw);  put(-L2,-fw); put(L2,fw); put(-L2,fw);
   put(-sw,-S2); put(sw,-S2);  put(sw,S2); put(-sw,-S2); put(sw,S2); put(-sw,S2);
 }
-function uploadSlot(a){
-  const off=a.slot*SLOT_V*3*4, len=SLOT_V*3;
+function uploadRange(slot){
+  const len=SLOT_V*3;
   gl.bindBuffer(gl.ARRAY_BUFFER,acBuf.posB);
-  gl.bufferSubData(gl.ARRAY_BUFFER,off,acPos.subarray(a.slot*len,a.slot*len+len));
+  gl.bufferSubData(gl.ARRAY_BUFFER,slot*len*4,acPos.subarray(slot*len,slot*len+len));
   gl.bindBuffer(gl.ARRAY_BUFFER,acBuf.colB);
-  gl.bufferSubData(gl.ARRAY_BUFFER,off,acCol.subarray(a.slot*len,a.slot*len+len));
-  const so=a.slot*SH_V*3;
+  gl.bufferSubData(gl.ARRAY_BUFFER,slot*len*4,acCol.subarray(slot*len,slot*len+len));
+  const so=slot*SH_V*3;
   gl.bindBuffer(gl.ARRAY_BUFFER,shBuf.posB);
   gl.bufferSubData(gl.ARRAY_BUFFER,so*4,shPos.subarray(so,so+SH_V*3));
   gl.bindBuffer(gl.ARRAY_BUFFER,shBuf.colB);
@@ -1202,18 +1473,19 @@ function uploadSlot(a){
 }
 
 /* ------------------------------ camera ------------------------------ */
-/* Targets sit right of centre so the airfield clears the strip rail. */
 const CAMS={
-  /* eye lands at roughly the tower cab, looking west down runway 09 */
-  tower:    {tx:-800, tz:100, dist:1155, yaw:0.192, pitch:0.082},
-  threshold:{tx:-1500,tz:95,  dist:520,  yaw:2.720, pitch:0.140},
-  apron:    {tx:300,  tz:900, dist:640,  yaw:-1.352,pitch:0.190},
-  plan:     {tx:420,  tz:430, dist:3050, yaw:1.5708,pitch:1.300}
+  tower:    {tx:-700, ty:0,  tz:300,  dist:1750,yaw:0.300, pitch:0.200},
+  /* on the approach path, just south of the centreline, looking at the 09
+     threshold: inbounds come down the slope towards you */
+  final:    {tx:-1900,ty:30, tz:0,    dist:900, yaw:3.200, pitch:0.055},
+  threshold:{tx:-1600,ty:0,  tz:-90,  dist:620, yaw:2.600, pitch:0.160},
+  apron:    {tx:300,  ty:0,  tz:900,  dist:640, yaw:-1.352,pitch:0.190},
+  plan:     {tx:-500, ty:0,  tz:620,  dist:3800,yaw:1.5708,pitch:1.300}
 };
-const cam={tx:0,ty:0,tz:300,dist:1500,yaw:1.15,pitch:0.30,mode:"tower",chase:null};
+const cam={tx:0,ty:0,tz:0,dist:1155,yaw:0.192,pitch:0.082,mode:"tower",chase:null};
 function applyCam(name){
   const c=CAMS[name]; if(!c) return;
-  cam.tx=c.tx; cam.tz=c.tz; cam.ty=0; cam.dist=c.dist; cam.yaw=c.yaw; cam.pitch=c.pitch;
+  cam.tx=c.tx; cam.ty=c.ty; cam.tz=c.tz; cam.dist=c.dist; cam.yaw=c.yaw; cam.pitch=c.pitch;
 }
 function camEye(){
   const cp=Math.cos(cam.pitch);
@@ -1243,7 +1515,7 @@ function setMode(m){
     if(cam.mode!=="free"){ cam.mode="free"; cam.chase=null;
       for(const b of document.querySelectorAll("#cams .chip")) b.setAttribute("aria-pressed","false"); }
   });
-  const end=e=>{ drag=null; canvas.classList.remove("drag"); };
+  const end=()=>{ drag=null; canvas.classList.remove("drag"); };
   canvas.addEventListener("pointerup",end); canvas.addEventListener("pointercancel",end);
   canvas.addEventListener("contextmenu",e=>e.preventDefault());
   canvas.addEventListener("wheel",e=>{
@@ -1263,43 +1535,70 @@ function setMode(m){
 /* ------------------------------- HUD -------------------------------- */
 const $=id=>document.getElementById(id);
 const PHASE_LABEL={push:"Pushback",startup:"Start-up",taxi:"Taxi",hold:"Hold short",
-                   lineup:"Line up",roll:"Take-off roll",climb:"Airborne"};
+  lineup:"Line up",roll:"Take-off roll",climb:"Airborne",
+  approach:"Final",rollout:"Landing roll",taxiin:"Taxi in",goaround:"Go-around",holding:"Holding"};
 const PHASE_CLASS={push:"p-push",startup:"p-push",taxi:"p-taxi",hold:"p-hold",
-                   lineup:"p-dep",roll:"p-dep",climb:"p-dep"};
+  lineup:"p-dep",roll:"p-dep",climb:"p-dep",
+  approach:"p-arr",rollout:"p-arr",taxiin:"p-arr",goaround:"p-ga",holding:"p-ga"};
 function hhmmss(t){
   const s=Math.floor(t)%60, m=Math.floor(t/60)%60, h=Math.floor(t/3600);
   return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(s).padStart(2,"0");
 }
-function distToGo(a){
-  if(a.phase==="climb") return -1;
-  if(a.phase==="roll"||a.phase==="lineup") return 0;
-  if(a.phase==="taxi"||a.phase==="hold") return a.sRunway-a.s;
-  return a.path.len+200;
+/* strips are ordered the way a controller reads the bay: whoever has the
+   runway, then who wants it next, then the queues behind them */
+function rank(a){
+  switch(a.phase){
+    case "rollout": return 0;
+    case "roll": case "lineup": return 1;
+    case "approach": return 2+Math.max(0,RWY.x0-a.x)/1e7;
+    case "climb": return 3;
+    case "goaround": return 4;
+    case "holding": return 5;
+    case "hold": case "taxi": return 10+(a.sRunway-a.s)/1e7;
+    case "taxiin": return 10+(a.path.len-a.s)/1e7;
+    default: return 20;
+  }
+}
+function stripMeta(a){
+  if(a.phase==="approach") return (Math.max(0,RWY.x0-a.x)/1000).toFixed(1)+" km";
+  if(a.phase==="climb"||a.phase==="goaround"||a.phase==="holding") return Math.round(a.y)+" m";
+  if(a.phase==="rollout"||a.phase==="taxiin") return ((a.path.len-a.s)/1000).toFixed(1)+" km";
+  if(a.phase==="roll"||a.phase==="lineup") return a.sid;
+  if(a.phase==="taxi"||a.phase==="hold") return Math.max(0,(a.sRunway-a.s)/1000).toFixed(1)+" km";
+  return "stand "+a.stand;
 }
 let lastHud=0, lastStrips=0, liveCount=100;
 function updateHud(now){
   if(now-lastHud<150) return; lastHud=now;
-  const c={wait:0,push:0,taxi:0,hold:0,dep:0}; let live=0;
+  const c={stand:0,push:0,taxi:0,inbound:0,taxiin:0}; let busy=0;
   for(const a of air){
-    if(a.phase!=="gone") live++;
-    if(a.phase==="wait") c.wait++;
-    else if(a.phase==="push"||a.phase==="startup") c.push++;
-    else if(a.phase==="taxi") c.taxi++;
-    else if(a.phase==="hold") c.hold++;
-    else if(a.phase!=="gone") c.dep++;
+    if(a.phase==="gone") continue;
+    if(a.phase!=="wait"&&a.phase!=="parked") busy++;
+    switch(a.phase){
+      case "wait": case "parked": c.stand++; break;
+      case "push": case "startup": c.push++; break;
+      case "taxi": case "hold": case "lineup": case "roll": c.taxi++; break;
+      case "approach": case "goaround": case "holding": c.inbound++; break;
+      case "rollout": case "taxiin": c.taxiin++; break;
+    }
   }
-  liveCount=live;
+  liveCount=busy;
+  const movements=departed+landed;
   $("clock").textContent=hhmmss(simT);
-  $("c-park").textContent=c.wait; $("c-push").textContent=c.push;
-  $("c-taxi").textContent=c.taxi; $("c-hold").textContent=c.hold; $("c-roll").textContent=c.dep;
+  $("c-stand").textContent=c.stand; $("c-push").textContent=c.push;
+  $("c-taxi").textContent=c.taxi;   $("c-in").textContent=c.inbound;
+  $("c-taxiin").textContent=c.taxiin; $("c-ga").textContent=goArounds;
   $("dep").innerHTML=departed+'<span style="color:var(--ink3)">/100</span>';
-  $("depbar").style.width=(departed)+"%";
-  const rw=$("rwy");
-  if(runway.owner){ rw.className="pill busy"; rw.textContent=runway.owner.cs; }
+  $("depbar").style.width=departed+"%";
+  $("arr").textContent=landed;
+  $("rate").textContent=simT>600?(movements/(simT/3600)).toFixed(0):"—";
+  const rw=$("rwy"), o=runway.owner;
+  if(o){ rw.className="pill "+(o.role==="arr"?"land":"busy");
+         rw.textContent=o.cs+(o.role==="arr"?" landing":" departing"); }
+  else if(departed>=100&&!liveCount){ rw.className="pill ok"; rw.textContent="Field closed"; }
   else{
     const wait=Math.max(0,Math.ceil(runway.vacatedAt+runway.need-simT));
-    if(departed>=100){ rw.className="pill ok"; rw.textContent="Field clear"; }
-    else if(wait>0){ rw.className="pill busy"; rw.textContent="Wake "+wait+"s"; }
+    if(wait>0){ rw.className="pill busy"; rw.textContent="Wake "+wait+"s"; }
     else { rw.className="pill ok"; rw.textContent="Clear"; }
   }
   const sv=$("sepv");
@@ -1309,23 +1608,20 @@ function updateHud(now){
   cf.className="v num "+(conflictPairs.size?"bad":"good");
 
   if(now-lastStrips<420) return; lastStrips=now;
-  const act=air.filter(a=>a.phase!=="wait"&&a.phase!=="gone")
-               .sort((x,y)=>distToGo(x)-distToGo(y)).slice(0,16);
-  $("bayn").textContent=air.filter(a=>a.phase!=="wait"&&a.phase!=="gone").length;
+  const act=air.filter(a=>a.phase!=="wait"&&a.phase!=="parked"&&a.phase!=="gone")
+               .sort((x,y)=>rank(x)-rank(y)).slice(0,16);
+  $("bayn").textContent=busy;
   if(!act.length){
     $("strips").innerHTML= departed>=100
-      ? '<p class="empty">All 100 departures airborne. The apron is empty &mdash; press Reset to run the morning again.</p>'
+      ? '<p class="empty">All 100 departures airborne and the last inbound is on stand. Press Reset to run the morning again.</p>'
       : '<p class="empty">Nothing moving. The next crew calls for push when its off-block time comes round.</p>';
   } else {
     let h="";
     for(const a of act){
-      const d=distToGo(a);
-      const meta=a.phase==="climb"?(Math.round(a.y)+" m"):
-                 (d<=0?a.sid:(d/1000).toFixed(1)+" km");
       h+='<div class="strip '+PHASE_CLASS[a.phase]+'"><span class="cs">'+a.cs+'</span>'+
          '<span class="ph">'+PHASE_LABEL[a.phase]+'</span>'+
-         '<span class="ty">'+a.type+' · '+a.F.cat+' · stand '+a.stand+'</span>'+
-         '<span class="mt">'+meta+'</span></div>';
+         '<span class="ty">'+a.type+' &middot; '+a.F.cat+' &middot; stand '+a.stand+'</span>'+
+         '<span class="mt">'+stripMeta(a)+'</span></div>';
     }
     $("strips").innerHTML=h;
   }
@@ -1342,37 +1638,44 @@ function resize(){
 function resetSim(){
   makeFleet();
   liveCount=100;
-  for(const a of air){ a.tpl=tplIndex(a.kind,LIVERY.indexOf(a.liv)); a.dirty=true; }
-  for(const a of air){ writeSlot(a); a.dirty=false; }
+  acPos.fill(0); acCol.fill(0); shPos.fill(0); shCol.fill(0);
+  for(let k=0;k<MAX_SLOTS;k++){
+    const o=k*SLOT_V*3;
+    for(let i=1;i<SLOT_V*3;i+=3) acPos[o+i]=-9000;
+    const q=k*SH_V*3;
+    for(let i=1;i<SH_V*3;i+=3) shPos[q+i]=-9000;
+  }
+  for(const a of air){ a.tpl=tplIndex(a.kind,LIVERY.indexOf(a.liv)); writeSlot(a); a.dirty=false; }
   gl.bindBuffer(gl.ARRAY_BUFFER,acBuf.posB); gl.bufferData(gl.ARRAY_BUFFER,acPos,gl.DYNAMIC_DRAW);
   gl.bindBuffer(gl.ARRAY_BUFFER,acBuf.colB); gl.bufferData(gl.ARRAY_BUFFER,acCol,gl.DYNAMIC_DRAW);
   gl.bindBuffer(gl.ARRAY_BUFFER,shBuf.posB); gl.bufferData(gl.ARRAY_BUFFER,shPos,gl.DYNAMIC_DRAW);
   gl.bindBuffer(gl.ARRAY_BUFFER,shBuf.colB); gl.bufferData(gl.ARRAY_BUFFER,shCol,gl.DYNAMIC_DRAW);
 }
 
-let prev=0, acc=0;
+let prev=0, accT=0;
 function frame(now){
   requestAnimationFrame(frame);
   const dtReal=Math.min(0.05,(now-prev)/1000||0); prev=now;
-  if(!paused&&liveCount>0){
-    acc+=dtReal*speed;
+  if(!paused&&(departed<100||liveCount>0)){
+    accT+=dtReal*speed;
     let guard=0;
-    while(acc>=SIM_DT&&guard<16){ step(SIM_DT); acc-=SIM_DT; guard++; }
-    if(acc>SIM_DT*16) acc=0;
+    while(accT>=SIM_DT&&guard<16){ step(SIM_DT); accT-=SIM_DT; guard++; }
+    if(accT>SIM_DT*16) accT=0;
     auditSeparation();
   }
   if(cam.mode==="chase"){
     let best=runway.owner;
-    if(!best||best.phase==="gone") { best=null;
+    if(!best||best.phase==="gone"){
+      best=null;
       for(const a of air){
-        if(a.phase==="gone"||a.phase==="wait"||a.phase==="climb") continue;
-        if(!best||distToGo(a)<distToGo(best)) best=a;
+        if(a.phase==="gone"||a.phase==="wait"||a.phase==="parked") continue;
+        if(!best||rank(a)<rank(best)) best=a;
       }
     }
     if(best){ cam.chase=best; cam.tx=best.x; cam.ty=best.y+14; cam.tz=best.z;
       cam.yaw=best.h+Math.PI; cam.dist=Math.max(165,best.F.len*3.4); cam.pitch=0.235; }
   }
-  for(const a of air){ if(a.dirty){ writeSlot(a); uploadSlot(a); a.dirty=false; } }
+  for(const a of air){ if(a.dirty&&a.slot>=0){ writeSlot(a); uploadRange(a.slot); a.dirty=false; } }
 
   resize();
   const asp=canvas.width/Math.max(1,canvas.height);
@@ -1401,4 +1704,5 @@ if(gl){
   document.getElementById("splash").classList.add("done");
   requestAnimationFrame(frame);
 }
+
 </script>

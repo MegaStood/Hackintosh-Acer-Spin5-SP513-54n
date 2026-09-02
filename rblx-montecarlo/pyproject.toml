@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rblxmc"
+version = "0.3.0"
+description = "Three-scenario jump-diffusion Monte Carlo for a single equity — CPU/CUDA, single node or torch.distributed"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26",
+  "torch>=2.4",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+report = ["playwright>=1.45"]   # only for screenshot checks of the HTML; not needed to build it
+
+[project.scripts]
+rblxmc = "rblxmc.run:main"
+
+[tool.setuptools.packages.find]
+include = ["rblxmc*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

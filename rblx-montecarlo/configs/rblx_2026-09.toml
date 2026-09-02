@@ -1,0 +1,85 @@
+# RBLX as of the 2026-08-31 close.  Every number here is a judgement or a public fact;
+# the engine contains nothing ticker-specific.
+
+[model]
+asof        = "2026-08-31"
+spot        = 40.86        # NYSE close
+shares0     = 0.710        # bn shares  (29.03bn market cap / 40.86)
+net_cash0   = 5.10         # $bn: 6.1 cash+investments less 1.0 debt, 6/30/26
+dilution    = 0.025        # net share issuance over the horizon, after buybacks
+frac_q3     = 0.40         # share of each scenario's log-repricing realised at the first print
+horizon_years = 1.0
+n_steps     = 252
+earn_days   = [41, 110, 165, 228]   # ~Oct-29, Feb, Apr-30, Jul-30
+nu          = 6            # Student-t degrees of freedom (integer)
+rf          = 0.04
+iv30        = 0.57         # quoted 30-day implied vol (Barchart), benchmark only
+barriers    = [25.0, 33.88]         # 52-week low is 33.88
+street_avg  = 48.32
+hist_bins   = 90
+hist_range  = [0.0, 180.0]
+band_stride = 5
+vsens_factors = [0.75, 1.0, 1.25]
+
+# sigma / earn_sd / js act on ENTERPRISE VALUE; the cash cushion damps them by
+# EV/(EV+cash) ~ 0.82 in equity terms at spot.  Gaps are sized to the realised
+# prints (-18% and -29%); diffusion is trimmed so each scenario keeps its total
+# variance budget (blend ~0.65 1y equity log-vol).
+
+[[scenario]]
+key = "bear"
+name = "Structural impairment"
+prob = 0.35
+fcf27 = 0.70
+mult = 18.0
+cash_t = 4.4
+sigma = 0.39
+earn_sd = 0.230
+lam = 2.0
+jm = -0.10
+js = 0.08
+
+[[scenario]]
+key = "base"
+name = "Trough, then stabilisation"
+prob = 0.45
+fcf27 = 1.30
+mult = 23.0
+cash_t = 5.6
+sigma = 0.31
+earn_sd = 0.210
+lam = 1.0
+jm = -0.05
+js = 0.07
+
+[[scenario]]
+key = "bull"
+name = "Re-acceleration on ads + verified base"
+prob = 0.20
+fcf27 = 1.90
+mult = 28.0
+cash_t = 6.2
+sigma = 0.36
+earn_sd = 0.210
+lam = 0.7
+jm = 0.02
+js = 0.08
+
+[[weight_set]]
+label = "35 / 45 / 20 (this report)"
+weights = [0.35, 0.45, 0.20]
+[[weight_set]]
+label = "33 / 33 / 33"
+weights = [0.3333333333, 0.3333333333, 0.3333333334]
+[[weight_set]]
+label = "25 / 45 / 30"
+weights = [0.25, 0.45, 0.30]
+[[weight_set]]
+label = "40 / 45 / 15"
+weights = [0.40, 0.45, 0.15]
+[[weight_set]]
+label = "45 / 40 / 15"
+weights = [0.45, 0.40, 0.15]
+[[weight_set]]
+label = "50 / 35 / 15"
+weights = [0.50, 0.35, 0.15]

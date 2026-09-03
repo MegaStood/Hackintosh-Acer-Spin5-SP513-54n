@@ -7,7 +7,12 @@ spot        = 40.86        # NYSE close
 shares0     = 0.710        # bn shares  (29.03bn market cap / 40.86)
 net_cash0   = 5.10         # $bn: 6.1 cash+investments less 1.0 debt, 6/30/26
 dilution    = 0.025        # net share issuance over the horizon, after buybacks
-frac_q3     = 0.40         # share of each scenario's log-repricing realised at the first print
+repricing   = [0.40, 0.20, 0.10, 0.05]   # share of each scenario's log-repricing delivered at each print (rest linear)
+frac_q3     = 0.40         # legacy single-print form; ignored when repricing is given
+garch_alpha = 0.06         # GJR-GARCH(1,1) on the diffusion leg: typical single-stock daily estimates
+garch_beta  = 0.90
+garch_gamma = 0.04
+gap_nu      = 5            # earnings gaps are Student-t(5): the last two prints were -18% and -29%
 horizon_years = 1.0
 n_steps     = 252
 earn_days   = [41, 110, 165, 228]   # ~Oct-29, Feb, Apr-30, Jul-30
@@ -26,13 +31,40 @@ vsens_factors = [0.75, 1.0, 1.25]
 # prints (-18% and -29%); diffusion is trimmed so each scenario keeps its total
 # variance budget (blend ~0.65 1y equity log-vol).
 
+# --- v4 factors --------------------------------------------------------------------
+[macro]
+# 10y-yield deviation from its expected path, priced through a multiple duration.
+rate_duration = 8.0        # -8% EV per +100bp surprise: 2022-style beta of long-duration growth equity
+rate_kappa    = 0.5        # deviations half-decay in ~1.4 years
+rate_vol      = 0.009      # 10y yield moves ~6bp/day -> ~90bp annualised
+rate_rho      = -0.30      # yields up on days growth stocks fall
+
+[fundamentals]
+fund_sd = 0.08             # log dispersion of FY27 bookings x margin around each scenario's anchor,
+                           # revealed at the prints through the repricing schedule
+
+[litigation]
+# securities class action (Jun-2026) + state-AG child-safety suits; one resolution event.
+lit_lam       = 0.6        # P(resolution inside 12 months) = 1 - e^-0.6 = 45%
+lit_loss_mean = 0.5        # $bn cash settlement, lognormal mean (class-action ~2-5% of investor
+lit_loss_sdlog = 0.7       #   losses plus AG settlements; wide uncertainty)
+lit_sent_mean = 0.03       # 3% EV sentiment hit on resolution
+lit_sent_sd   = 0.02
+
+# --- scenarios ---------------------------------------------------------------------
+# fcf27 = bookings27 x fcf_margin27.  FY25: FCF $1.35B on ~$6.8B bookings (20%);
+# FY26 guide $1.05-1.28B on ~$7.0B (~17%).  FY25 bookings ~$6.8B; FY26E ~flat.
+
 [[scenario]]
 key = "bear"
 name = "Structural impairment"
 prob = 0.35
+bookings27 = 6.3           # -9%: age-check damage persists
+fcf_margin27 = 0.111
 fcf27 = 0.70
 mult = 18.0
 cash_t = 4.4
+lit_scale = 1.5
 sigma = 0.39
 earn_sd = 0.230
 lam = 2.0
@@ -43,9 +75,12 @@ js = 0.08
 key = "base"
 name = "Trough, then stabilisation"
 prob = 0.45
+bookings27 = 7.5           # +7%: stabilisation, then mid-single-digit growth
+fcf_margin27 = 0.1733
 fcf27 = 1.30
 mult = 23.0
 cash_t = 5.6
+lit_scale = 1.0
 sigma = 0.31
 earn_sd = 0.210
 lam = 1.0
@@ -56,9 +91,12 @@ js = 0.07
 key = "bull"
 name = "Re-acceleration on ads + verified base"
 prob = 0.20
+bookings27 = 8.7           # +24%: ads + verified base re-accelerate
+fcf_margin27 = 0.2184
 fcf27 = 1.90
 mult = 28.0
 cash_t = 6.2
+lit_scale = 0.6
 sigma = 0.36
 earn_sd = 0.210
 lam = 0.7

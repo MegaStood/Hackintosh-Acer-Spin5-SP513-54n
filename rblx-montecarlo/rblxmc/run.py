@@ -57,7 +57,7 @@ def main(argv=None) -> None:
     ap.add_argument("--out", default="out")
     ap.add_argument("--paths", type=int, default=200_000, help="paths per scenario (total across ranks)")
     ap.add_argument("--vsens-paths", type=int, default=60_000)
-    ap.add_argument("--chunk", type=int, default=250_000)
+    ap.add_argument("--chunk", type=int, default=0, help="paths per batch (0 = 1M on CUDA, 250k on CPU)")
     ap.add_argument("--band-keep", type=int, default=100_000)
     ap.add_argument("--seed", type=int, default=20260901)
     ap.add_argument("--device", default="auto", choices=("auto", "cuda", "cpu"))
@@ -66,6 +66,8 @@ def main(argv=None) -> None:
     args = ap.parse_args(argv)
 
     ctx = D.init(args.device)
+    if args.chunk <= 0:
+        args.chunk = 1_000_000 if ctx.device.type == "cuda" else 250_000
     cfg = ModelConfig.load(args.config)
     outdir = Path(args.out)
     if ctx.main:
@@ -112,6 +114,9 @@ def main(argv=None) -> None:
         st.update(prob=sc.prob, name=sc.name, fcf27=sc.fcf27, mult=sc.mult,
                   px_anchor=der.px_anchor, ev_anchor=der.ev_anchor, sigma=sc.sigma,
                   earn_sd=sc.earn_sd, mu=der.mu, lam=sc.lam, q3_mean=der.q3_mean, frac_q3=cfg.frac_q3,
+                  gap_means=list(der.gap_means), schedule=list(cfg.schedule),
+                  bookings27=sc.bookings27, fcf_margin27=sc.fcf_margin27, lit_scale=sc.lit_scale,
+                  factors=cfg.factor_summary(sc),
                   med_trough=float(np.median(r.rmin.numpy()) / spot - 1),
                   h3m=summary(r.p3.numpy(), spot, sa), h6m=summary(r.p6.numpy(), spot, sa),
                   bands=band_percentiles(r.bands.numpy()),

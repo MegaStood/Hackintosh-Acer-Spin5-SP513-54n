@@ -30,14 +30,34 @@ def _skw(x):
     return float((d ** 3).mean() / d.std() ** 3)
 
 
-def _sim_inc(cfg: ModelConfig, sc: Scenario, n: int, seed: int, *, q3: float, drift: float = 0.0):
-    """Daily log increments of EV for one scenario (drift-free unless ``drift`` given)."""
+def _sim_inc(cfg: ModelConfig, sc: Scenario, n: int, seed: int, *, q3: float = 0.0,
+             drift: float = 0.0, gap_means=None):
+    """Daily log increments of EV for one scenario (drift-free unless ``drift`` given).
+    Mirrors the engine's diffusion (GJR-GARCH, Student-t), gaps (t or normal) and jumps."""
     N, dt, nu = cfg.n_steps, cfg.dt, cfg.nu
     tsc = math.sqrt((nu - 2) / nu)
     r = np.random.default_rng(seed)
-    inc = (drift - 0.5 * sc.sigma ** 2) * dt + sc.sigma * math.sqrt(dt) * (r.standard_t(nu, size=(n, N)) * tsc)
+    eps = r.standard_t(nu, size=(n, N)) * tsc
+    vbar = sc.sigma ** 2 * dt
+    al, be, ga = cfg.garch_alpha, cfg.garch_beta, cfg.garch_gamma
+    if al or be or ga:
+        omega = vbar * (1 - al - be - 0.5 * ga)
+        h = np.full(n, vbar); ret = np.empty((n, N))
+        for t in range(N):
+            rt = np.sqrt(h) * eps[:, t]
+            ret[:, t] = rt
+            h = omega + (al + ga * (rt < 0)) * rt * rt + be * h
+    else:
+        ret = math.sqrt(vbar) * eps
+    inc = (drift - 0.5 * sc.sigma ** 2) * dt + ret
+    if gap_means is None:
+        gap_means = [q3] + [0.0] * (len(cfg.earn_days) - 1)
     for i, d in enumerate(cfg.earn_days):
-        inc[:, d] += r.normal(q3 if i == 0 else 0.0, sc.earn_sd, n)
+        if cfg.gap_nu and cfg.gap_nu >= 3:
+            xi = r.standard_t(cfg.gap_nu, n) * math.sqrt((cfg.gap_nu - 2) / cfg.gap_nu)
+        else:
+            xi = r.standard_normal(n)
+        inc[:, d] += gap_means[i] + sc.earn_sd * xi
     c = r.poisson(sc.lam * dt, size=(n, N))
     h = c > 0
     if h.any():
@@ -80,7 +100,7 @@ def write_tails(cfg: ModelConfig, outdir: Path, seed: int = 3) -> dict:
     base, bear = _scen(cfg, "base"), _scen(cfg, "bear")
     db, dbear = cfg.derive(base), cfg.derive(bear)
 
-    inc = _sim_inc(cfg, base, 150_000, 11, q3=db.q3_mean)
+    inc = _sim_inc(cfg, base, 150_000, 11, gap_means=db.gap_means)
     hz = []
     for lbl, d in [("1 day", 1), ("1 week", 5), ("1 month", 21), ("3 months", 63),
                    ("6 months", 126), ("12 months", N)]:
@@ -93,7 +113,7 @@ def write_tails(cfg: ModelConfig, outdir: Path, seed: int = 3) -> dict:
     shares_T = cfg.shares0 * (1 + cfg.dilution)
     for i, sc in enumerate(cfg.scenarios):
         der = cfg.derive(sc)
-        inc = _sim_inc(cfg, sc, 150_000, 100 + i, q3=der.q3_mean, drift=der.mu)
+        inc = _sim_inc(cfg, sc, 150_000, 100 + i, gap_means=der.gap_means, drift=der.mu)
         px = (cfg.ev0 * np.exp(inc.sum(1)) + sc.cash_t) / shares_T
         parts.append(np.log(px / cfg.spot))
         ws.append(sc.prob)
@@ -106,8 +126,8 @@ def write_tails(cfg: ModelConfig, outdir: Path, seed: int = 3) -> dict:
         mix[m] = r.choice(parts[i], int(m.sum()), replace=True)
 
     keep = [c for c in range(N) if c != cfg.earn_days[0]]      # drop the scenario-signed print
-    d_base = _sim_inc(cfg, base, 60_000, 21, q3=db.q3_mean)[:, keep].ravel()
-    d_bear = _sim_inc(cfg, bear, 60_000, 22, q3=dbear.q3_mean)[:, keep].ravel()
+    d_base = _sim_inc(cfg, base, 60_000, 21, gap_means=db.gap_means)[:, keep].ravel()
+    d_bear = _sim_inc(cfg, bear, 60_000, 22, gap_means=dbear.gap_means)[:, keep].ravel()
     daily = {"base": {"skew": _skw(d_base), "kurt": _exk(d_base)},
              "bear": {"skew": _skw(d_bear), "kurt": _exk(d_bear)}}
     ib = [s.key for s in cfg.scenarios].index("base")
@@ -132,7 +152,9 @@ def write_path(cfg: ModelConfig, outdir: Path, max_seed: int = 400) -> dict:
         diff = base.sigma * math.sqrt(dt) * (r.standard_t(nu, N) * tsc)
         earn = np.zeros(N)
         for i, d in enumerate(EARN):
-            earn[d] = r.normal(db.q3_mean if i == 0 else 0.0, base.earn_sd)
+            xi = (r.standard_t(cfg.gap_nu) * math.sqrt((cfg.gap_nu - 2) / cfg.gap_nu)
+                  if cfg.gap_nu and cfg.gap_nu >= 3 else r.standard_normal())
+            earn[d] = db.gap_means[i] + base.earn_sd * xi
         cnt = r.poisson(base.lam * dt, N)
         hop = np.zeros(N)
         h = cnt > 0
@@ -165,7 +187,7 @@ def write_path(cfg: ModelConfig, outdir: Path, max_seed: int = 400) -> dict:
 
     ej = {d: float(earn[d]) for d in EARN}
     hj = {int(d): float(hop[d]) for d in hd}
-    pct = int(round(cfg.frac_q3 * 100))
+    pct = int(round(cfg.schedule[0] * 100))
     layers = [
         {"key": "drift", "label": "1 · Deterministic drift",
          "sub": "(μ − ½σ²)Δt — calibrated so the median lands on the anchor",
@@ -193,7 +215,7 @@ def write_path(cfg: ModelConfig, outdir: Path, max_seed: int = 400) -> dict:
     means = {}
     for i, sc in enumerate(cfg.scenarios):
         der = cfg.derive(sc)
-        inc = _sim_inc(cfg, sc, 40_000, 500 + i, q3=der.q3_mean, drift=der.mu)
+        inc = _sim_inc(cfg, sc, 40_000, 500 + i, gap_means=der.gap_means, drift=der.mu)
         ev = cfg.ev0 * np.exp(np.concatenate([np.zeros((inc.shape[0], 1)), np.cumsum(inc, 1)], 1))
         cs = cfg.net_cash0 + (sc.cash_t - cfg.net_cash0) * days / N
         means[sc.key] = np.round(((ev + cs) / shr).mean(0)[wk], 3).tolist()

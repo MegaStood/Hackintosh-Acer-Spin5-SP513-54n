@@ -98,6 +98,10 @@ dens.append(f'<text class="marklab strong" x="{dx(B["p50"])+6:.1f}" y="{DT+26}">
 DENS = "\n".join(dens)
 
 W_ANCHOR = sum(SC[k]["prob"] * SC[k]["px_anchor"] for k in KEYS)
+CFGD = R["config"]
+SCHED = SC["base"].get("schedule", [R.get("frac_q3", 0.4)])
+SCHED_TXT = " / ".join(f"{x*100:.0f}%" for x in SCHED)
+SCHED_REST = (1 - sum(SCHED)) * 100
 EVENT_IV = (0.57**2 + 4 * (SC["base"]["earn_sd"] * R["evps0"] / S0) ** 2) ** 0.5
 
 
@@ -171,6 +175,7 @@ for k in KEYS:
       <h3>{s["name"]}</h3>
       <p class="thesis">{THESIS[k]}</p>
       <dl class="anchor">
+        <div><dt>FY27 bookings × FCF margin</dt><dd>${s.get("bookings27") or 0:.1f}B × {(s.get("fcf_margin27") or 0)*100:.0f}%</dd></div>
         <div><dt>FY27 free cash flow</dt><dd>${s["fcf27"]:.2f}B</dd></div>
         <div><dt>Exit multiple on FCF</dt><dd>{s["mult"]:.0f}×</dd></div>
         <div><dt>Implied 12-month anchor</dt><dd class="big">{usd(s["px_anchor"])}</dd></div>
@@ -815,7 +820,8 @@ footer a {{ color:var(--navy); }}
     it grows 2.5% over the year, the assumed net issuance after buybacks.</li>
     <li><b>Jumps shape the path, not the endpoint.</b>
     Four scheduled earnings gaps a year, sized so a one-sigma gap is 17–19% of the share price —
-    calibrated to the realized prints (RBLX fell 18% and 29% on its last two) — plus
+    calibrated to the realized prints (RBLX fell 18% and 29% on its last two) and drawn from a
+    Student-t({CFGD["gap_nu"]}) rather than a Gaussian — plus
     Poisson headline jumps for regulatory and legal news, on top of Student-t diffusion shocks.
     This makes the <i>daily</i> return distribution realistically fat-tailed and left-skewed — which
     is what drives the drawdown and touch-probability numbers. It does almost nothing to the
@@ -830,15 +836,39 @@ footer a {{ color:var(--navy); }}
     way, option-implied volatility usually carries a premium over realised volatility, which argues
     for a physical-measure number somewhat below the implied one. Net: treat this scenario set as
     deliberately wide, not as a claim that options misprice the year.</li>
-    <li><b>Drift is calibrated, not assumed — and 40% of it lands on one day.</b>
+    <li><b>Drift is calibrated, not assumed — and most of it lands on the prints.</b>
     Each scenario's drift is solved so the median terminal enterprise value equals its
-    fundamental anchor, with the expected jump contribution netted out so the jumps do not
-    silently add return. But repricing does not accrue evenly in reality: with guidance withdrawn,
-    the Q3 print on ~29 October is the first hard evidence of which scenario is unfolding. So the
-    model realises 40% of each scenario's log-repricing as the <i>mean</i> of that day's gap
-    ({SC["bear"]["q3_mean"]*100:+.0f}% in the bear case, {SC["bull"]["q3_mean"]*100:+.0f}% in
-    the bull) and spreads the remaining 60% across the year. The 12-month median is unchanged by
-    this; the 3-month distributions and the drawdown numbers are not.</li>
+    fundamental anchor, with the expected headline-jump contribution netted out. Repricing does
+    not accrue evenly in reality: with guidance withdrawn, the prints are the information events.
+    So the model delivers {SCHED_TXT} of each scenario's log-repricing as the <i>means</i> of the
+    four earnings gaps ({SC["bear"]["q3_mean"]*100:+.0f}% at the Q3 print in the bear case,
+    {SC["bull"]["q3_mean"]*100:+.0f}% in the bull) and spreads the remaining {SCHED_REST:.0f}%
+    across the year. The 12-month median is unchanged by this; the 3-month distributions and the
+    drawdown numbers are not.</li>
+    <li><b>Volatility clusters.</b>
+    The diffusion variance follows a GJR-GARCH(1,1) (α {CFGD["garch_alpha"]:.2f}, β
+    {CFGD["garch_beta"]:.2f}, γ {CFGD["garch_gamma"]:.2f}; persistence
+    {CFGD["garch_alpha"]+CFGD["garch_beta"]+CFGD["garch_gamma"]/2:.2f}), so a bad week raises the
+    odds of a bad month, and drawdowns compound the way they do in real data rather than
+    arriving as independent coin flips. The unconditional level is still each scenario's σ.</li>
+    <li><b>Three risks are modelled explicitly rather than folded into "noise".</b>
+    <i>Rates:</i> a 10-year-yield deviation from its expected path (Ornstein–Uhlenbeck,
+    {CFGD["rate_vol"]*1e4:.0f} bp/yr, ρ = {CFGD["rate_rho"]:+.2f} with the equity shock) priced
+    through a multiple duration of {CFGD["rate_duration"]:.0f} — a +100 bp surprise takes
+    {CFGD["rate_duration"]:.0f}% off enterprise value. Zero-mean, so it widens the distribution
+    by about {SC["base"]["factors"]["macro_logsd"]*100:.0f}% log-vol without moving the anchors.
+    <i>Bookings:</i> the anchors are FY27 bookings × FCF margin × multiple, and each path carries
+    its own {CFGD["fund_sd"]*100:.0f}% log dispersion around the scenario's bookings forecast,
+    revealed at the prints — the Q3 gap is literally a bookings surprise.
+    <i>Litigation:</i> one resolution event (securities class action, state-AG child-safety
+    suits) arriving at rate {CFGD["lit_lam"]:.1f}/yr scaled by scenario, that takes a lognormal
+    ${CFGD["lit_loss_mean"]:.1f}B out of cash and {CFGD["lit_sent_mean"]*100:.0f}% off EV
+    sentiment. It is deliberately <i>not</i> compensated in the drift: the anchors are
+    pre-litigation, and this is an expected drag on top — {pc(SC["bear"]["factors"]["lit_prob"])} /
+    {pc(SC["base"]["factors"]["lit_prob"])} / {pc(SC["bull"]["factors"]["lit_prob"])} odds of a
+    resolution inside the year in bear / base / bull, worth roughly
+    {SC["bear"]["factors"]["lit_expected_drag"]*100:.1f}% / {SC["base"]["factors"]["lit_expected_drag"]*100:.1f}% /
+    {SC["bull"]["factors"]["lit_expected_drag"]*100:.1f}% of value in expectation.</li>
   </ul>
   <div class="callout">
     <h3>What the total volatility does — and doesn't — rest on</h3>
@@ -979,10 +1009,17 @@ footer a {{ color:var(--navy); }}
     <li><b>Guidance is withdrawn.</b> The FY2027 free cash flow anchors are extrapolations from a
     company that has explicitly declined to forecast itself. The FY2026 range it did give is
     $1.05–1.28B, against $1.35B in 2025.</li>
-    <li><b>"40% at the Q3 print" is a stated guess.</b> How much of the year's repricing the
-    29 October print delivers is unknowable in advance; the figure sets the size of the scenario
-    divergence at three months and the depth of the early drawdowns, but not the 12-month
+    <li><b>The repricing schedule ({SCHED_TXT} across the four prints) is a stated guess.</b>
+    How much of the year's repricing each print delivers is unknowable in advance; it sets the
+    scenario divergence at three months and the depth of the early drawdowns, not the 12-month
     median.</li>
+    <li><b>The rate and litigation factors are parameterised from priors, not fitted.</b>
+    A multiple duration of {CFGD["rate_duration"]:.0f} is a 2022-style growth-equity beta; the
+    litigation intensity and settlement size are order-of-magnitude judgments from comparable
+    class actions and the pending state-AG suits. Both are small next to the scenario spread
+    ({SC["base"]["factors"]["macro_logsd"]*100:.0f}% and ~{SC["base"]["factors"]["lit_expected_drag"]*100:.0f}% of
+    value respectively in the base case) but neither is validated. <code>rblxmc.calibrate</code>
+    fits the rate beta from a yield series when one is supplied.</li>
     <li><b>Dilution is a guess.</b> Terminal values are divided by a share count 2.5% higher than
     today's — an assumption about how far the $3B buyback offsets ~$1B/yr of stock-based
     compensation. Each additional point of net issuance takes roughly one percent off every price

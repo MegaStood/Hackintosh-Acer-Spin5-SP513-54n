@@ -175,7 +175,7 @@ for k in KEYS:
       <h3>{s["name"]}</h3>
       <p class="thesis">{THESIS[k]}</p>
       <dl class="anchor">
-        <div><dt>FY27 bookings × FCF margin</dt><dd>${s.get("bookings27") or 0:.1f}B × {(s.get("fcf_margin27") or 0)*100:.0f}%</dd></div>
+        <div><dt>FY27 bookings × margin</dt><dd>${s.get("bookings27") or 0:.1f}B × {(s.get("fcf_margin27") or 0)*100:.0f}%</dd></div>
         <div><dt>FY27 free cash flow</dt><dd>${s["fcf27"]:.2f}B</dd></div>
         <div><dt>Exit multiple on FCF</dt><dd>{s["mult"]:.0f}×</dd></div>
         <div><dt>Implied 12-month anchor</dt><dd class="big">{usd(s["px_anchor"])}</dd></div>
@@ -481,7 +481,7 @@ p {{ margin:0 0 16px; }} .col p:last-child {{ margin-bottom:0; }}
 .anchor div {{ display:flex; align-items:baseline; gap:10px; }}
 .anchor dt {{ font-size:12.5px; color:var(--ink-3); }}
 .anchor dd {{ margin:0 0 0 auto; font-family:"IBM Plex Mono",monospace; font-size:13.5px;
-  font-weight:500; font-variant-numeric:tabular-nums; }}
+  font-weight:500; font-variant-numeric:tabular-nums; white-space:nowrap; }}
 .anchor dd.big {{ font-size:19px; font-weight:600; color:var(--edge); }}
 .anchor div:last-child {{ border-top:1px solid var(--rule); padding-top:8px; margin-top:1px; }}
 .facts {{ list-style:none; margin:14px 0 0; padding:0; }}
